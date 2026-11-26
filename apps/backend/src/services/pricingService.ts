@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import {
   DEFAULT_MODEL_RATES,
+  applyCursorTokenFee,
   normalizeModelKey,
   resolveModelRates,
   type ModelPricing,
@@ -9,35 +10,142 @@ import {
 } from '@cursor-dashboard/shared';
 import type { TelemetryRepository } from '../db/repository.js';
 
-const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
-const LITELLM_PRICING_URL =
-  'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
+export const MODELS_DEV_API_URL = 'https://models.dev/api.json';
 
-interface OpenRouterModel {
+/**
+ * Proveedores oficiales priorizados al consolidar models.dev para evitar que
+ * agregadores o revendedores sobrescriban las tarifas de lista del fabricante.
+ */
+const PREFERRED_PROVIDER_ORDER = [
+  'anthropic',
+  'google',
+  'openai',
+  'xai',
+  'deepseek',
+  'mistral',
+  'cohere',
+  'perplexity',
+];
+
+const IGNORED_VARIANT_SUFFIX = /:(batch|free|nitro|floor|extended|exacto)$/i;
+
+interface ModelsDevCost {
+  input?: number;
+  output?: number;
+  cache_read?: number;
+  cache_write?: number;
+}
+
+interface ModelsDevModel {
   id?: string;
-  pricing?: {
-    prompt?: string;
-    completion?: string;
-    input_cache_read?: string;
-    input_cache_write?: string;
-  };
+  cost?: ModelsDevCost;
 }
 
-interface LiteLlmEntry {
-  input_cost_per_token?: number;
-  output_cost_per_token?: number;
-  cache_read_input_token_cost?: number;
-  cache_creation_input_token_cost?: number;
+interface ModelsDevProvider {
+  id?: string;
+  models?: Record<string, ModelsDevModel>;
 }
+
+type ModelsDevCatalogResponse = Record<string, ModelsDevProvider>;
 
 export interface PricingServiceOptions {
   overridesPath: string;
   cacheTtlHours: number;
+  cursorTokenFeePer1m?: number;
   fetchFn?: typeof fetch;
+}
+
+function isFiniteNonNegative(val: unknown): val is number {
+  return typeof val === 'number' && Number.isFinite(val) && val >= 0;
+}
+
+function getProviderRank(providerKey: string): number {
+  const idx = PREFERRED_PROVIDER_ORDER.indexOf(providerKey.toLowerCase());
+  return idx === -1 ? PREFERRED_PROVIDER_ORDER.length : idx;
+}
+
+function hasIgnoredVariant(rawId: string): boolean {
+  return IGNORED_VARIANT_SUFFIX.test(rawId.trim());
+}
+
+/**
+ * Parsea el catálogo de https://models.dev/api.json (precios en USD por 1M de tokens)
+ * priorizando proveedores directos y claves canónicas sin sufijos de fecha/variante.
+ */
+export function parseModelsDevCatalog(
+  payload: unknown,
+  updatedAt: string,
+): Map<string, ModelPricing> {
+  const collected = new Map<string, ModelPricing>();
+  if (!payload || typeof payload !== 'object') {
+    return collected;
+  }
+
+  const providers = Object.entries(payload as ModelsDevCatalogResponse).sort(([a], [b]) => {
+    const rankDiff = getProviderRank(a) - getProviderRank(b);
+    return rankDiff !== 0 ? rankDiff : a.localeCompare(b);
+  });
+
+  for (const [, provider] of providers) {
+    if (!provider || typeof provider !== 'object' || !provider.models) continue;
+
+    const entries = Object.entries(provider.models)
+      .map(([modelMapKey, model]) => {
+        const rawId =
+          typeof model?.id === 'string' && model.id.trim().length > 0
+            ? model.id.trim()
+            : modelMapKey.trim();
+        const normalizedKey = normalizeModelKey(rawId);
+        const strippedRaw = rawId.toLowerCase().includes('/')
+          ? rawId.toLowerCase().split('/').pop() || rawId.toLowerCase()
+          : rawId.toLowerCase();
+        const isExactCanonical = strippedRaw === normalizedKey;
+        return { rawId, model, normalizedKey, isExactCanonical };
+      })
+      .sort((a, b) => {
+        if (a.isExactCanonical !== b.isExactCanonical) {
+          return a.isExactCanonical ? -1 : 1;
+        }
+        return a.rawId.length - b.rawId.length;
+      });
+
+    for (const { rawId, model, normalizedKey } of entries) {
+      if (!rawId || !normalizedKey || normalizedKey === 'unknown') continue;
+      if (hasIgnoredVariant(rawId)) continue;
+      if (collected.has(normalizedKey)) continue;
+
+      const cost = model?.cost;
+      if (!cost || typeof cost !== 'object') continue;
+      if (!isFiniteNonNegative(cost.input) || !isFiniteNonNegative(cost.output)) continue;
+      if (cost.input <= 0 && cost.output <= 0) continue;
+
+      const inputPer1m = Number(cost.input.toFixed(6));
+      const outputPer1m = Number(cost.output.toFixed(6));
+      const cacheReadPer1m = isFiniteNonNegative(cost.cache_read)
+        ? Number(cost.cache_read.toFixed(6))
+        : Number((inputPer1m * 0.1).toFixed(6));
+      const cacheWritePer1m = isFiniteNonNegative(cost.cache_write)
+        ? Number(cost.cache_write.toFixed(6))
+        : inputPer1m;
+
+      collected.set(normalizedKey, {
+        model_key: normalizedKey,
+        input_per_1m: inputPer1m,
+        cache_read_per_1m: cacheReadPer1m,
+        cache_write_per_1m: cacheWritePer1m,
+        output_per_1m: outputPer1m,
+        updated_at: updatedAt,
+        is_override: false,
+      });
+    }
+  }
+
+  return collected;
 }
 
 export class PricingService {
   private readonly fetchFn: typeof fetch;
+  private readonly cursorTokenFeePer1m: number;
   private cachedCatalog: PricingOverridesMap = {};
   private cachedOverrides: PricingOverridesMap = {};
 
@@ -46,6 +154,9 @@ export class PricingService {
     private readonly options: PricingServiceOptions,
   ) {
     this.fetchFn = options.fetchFn ?? fetch;
+    this.cursorTokenFeePer1m = isFiniteNonNegative(options.cursorTokenFeePer1m)
+      ? options.cursorTokenFeePer1m
+      : 0;
     this.loadFromStorage();
   }
 
@@ -65,6 +176,18 @@ export class PricingService {
   }
 
   private loadFromStorage(): void {
+    this.cachedOverrides = this.loadOverridesFromDisk();
+    const now = new Date().toISOString();
+    const overrideRows: ModelPricing[] = Object.entries(this.cachedOverrides).map(
+      ([modelKey, rates]) => ({
+        model_key: modelKey,
+        ...rates,
+        updated_at: now,
+        is_override: true,
+      }),
+    );
+    this.repo.replacePricingByOverride(overrideRows, true);
+
     const dbRows = this.repo.getAllPricing();
     const catalog: PricingOverridesMap = {};
     for (const row of dbRows) {
@@ -78,20 +201,6 @@ export class PricingService {
       }
     }
     this.cachedCatalog = catalog;
-    this.cachedOverrides = this.loadOverridesFromDisk();
-
-    if (Object.keys(this.cachedOverrides).length > 0) {
-      const now = new Date().toISOString();
-      const overrideRows: ModelPricing[] = Object.entries(this.cachedOverrides).map(
-        ([modelKey, rates]) => ({
-          model_key: modelKey,
-          ...rates,
-          updated_at: now,
-          is_override: true,
-        }),
-      );
-      this.repo.upsertPricingBatch(overrideRows);
-    }
   }
 
   async ensureFreshCatalog(): Promise<{ refreshed: boolean; count: number; source: string }> {
@@ -111,94 +220,25 @@ export class PricingService {
 
   async refreshCatalog(): Promise<{ refreshed: boolean; count: number; source: string }> {
     const now = new Date().toISOString();
-    const collected = new Map<string, ModelPricing>();
+    let collected = new Map<string, ModelPricing>();
     let source = 'defaults';
 
-    // 1. Primaria: OpenRouter Models API (solo lectura GET, sin enviar datos privados)
+    // Única fuente remota: https://models.dev/api.json (solo lectura GET, sin enviar datos privados)
     try {
-      const res = await this.fetchFn(OPENROUTER_MODELS_URL, {
-        signal: AbortSignal.timeout(5000),
+      const res = await this.fetchFn(MODELS_DEV_API_URL, {
+        signal: AbortSignal.timeout(10_000),
       });
       if (res.ok) {
-        const json = (await res.json()) as { data?: OpenRouterModel[] };
-        for (const item of json.data ?? []) {
-          if (!item.id || !item.pricing) continue;
-          const inputPerToken = Number(item.pricing.prompt ?? 0);
-          const outputPerToken = Number(item.pricing.completion ?? 0);
-          if (!Number.isFinite(inputPerToken) || !Number.isFinite(outputPerToken)) continue;
-          if (inputPerToken <= 0 && outputPerToken <= 0) continue;
-
-          const inputPer1m = Number((inputPerToken * 1_000_000).toFixed(6));
-          const outputPer1m = Number((outputPerToken * 1_000_000).toFixed(6));
-          const cacheReadPer1m = item.pricing.input_cache_read
-            ? Number((Number(item.pricing.input_cache_read) * 1_000_000).toFixed(6))
-            : Number((inputPer1m * 0.1).toFixed(6));
-          const cacheWritePer1m = item.pricing.input_cache_write
-            ? Number((Number(item.pricing.input_cache_write) * 1_000_000).toFixed(6))
-            : Number((inputPer1m * 1.25).toFixed(6));
-
-          const normalizedKey = normalizeModelKey(item.id);
-          collected.set(normalizedKey, {
-            model_key: normalizedKey,
-            input_per_1m: inputPer1m,
-            cache_read_per_1m: cacheReadPer1m,
-            cache_write_per_1m: cacheWritePer1m,
-            output_per_1m: outputPer1m,
-            updated_at: now,
-            is_override: false,
-          });
+        const json = (await res.json()) as unknown;
+        collected = parseModelsDevCatalog(json, now);
+        if (collected.size > 0) {
+          source = 'models.dev';
         }
-        if (collected.size > 0) source = 'openrouter';
       }
     } catch {
-      // Fallback silencioso a LiteLLM o defaults offline
+      // Offline o error de red -> usar fallback offline DEFAULT_MODEL_RATES
     }
 
-    // 2. Fallback secundario: LiteLLM Pricing JSON (rellena modelos faltantes o si OpenRouter falló)
-    if (collected.size === 0) {
-      try {
-        const res = await this.fetchFn(LITELLM_PRICING_URL, {
-          signal: AbortSignal.timeout(5000),
-        });
-        if (res.ok) {
-          const json = (await res.json()) as Record<string, LiteLlmEntry>;
-          for (const [rawKey, entry] of Object.entries(json)) {
-            if (!entry || typeof entry !== 'object') continue;
-            const inputPerToken = Number(entry.input_cost_per_token ?? 0);
-            const outputPerToken = Number(entry.output_cost_per_token ?? 0);
-            if (!Number.isFinite(inputPerToken) || !Number.isFinite(outputPerToken)) continue;
-            if (inputPerToken <= 0 && outputPerToken <= 0) continue;
-
-            const inputPer1m = Number((inputPerToken * 1_000_000).toFixed(6));
-            const outputPer1m = Number((outputPerToken * 1_000_000).toFixed(6));
-            const cacheReadPer1m = entry.cache_read_input_token_cost
-              ? Number((Number(entry.cache_read_input_token_cost) * 1_000_000).toFixed(6))
-              : Number((inputPer1m * 0.1).toFixed(6));
-            const cacheWritePer1m = entry.cache_creation_input_token_cost
-              ? Number((Number(entry.cache_creation_input_token_cost) * 1_000_000).toFixed(6))
-              : Number((inputPer1m * 1.25).toFixed(6));
-
-            const normalizedKey = normalizeModelKey(rawKey);
-            if (!collected.has(normalizedKey)) {
-              collected.set(normalizedKey, {
-                model_key: normalizedKey,
-                input_per_1m: inputPer1m,
-                cache_read_per_1m: cacheReadPer1m,
-                cache_write_per_1m: cacheWritePer1m,
-                output_per_1m: outputPer1m,
-                updated_at: now,
-                is_override: false,
-              });
-            }
-          }
-          if (collected.size > 0) source = 'litellm';
-        }
-      } catch {
-        // Offline total -> usar defaults
-      }
-    }
-
-    // Asegurar modelos base offline si la red falló
     if (collected.size === 0) {
       for (const [key, rates] of Object.entries(DEFAULT_MODEL_RATES)) {
         collected.set(key, {
@@ -211,7 +251,7 @@ export class PricingService {
     }
 
     const batch = Array.from(collected.values());
-    this.repo.upsertPricingBatch(batch);
+    this.repo.replacePricingByOverride(batch, false);
     this.loadFromStorage();
 
     return {
@@ -222,7 +262,27 @@ export class PricingService {
   }
 
   getRates(modelKey: string): { rates: ModelRates; matched: boolean; matchedKey: string | null } {
-    return resolveModelRates(modelKey, this.cachedCatalog, this.cachedOverrides);
+    const resolved = resolveModelRates(modelKey, this.cachedCatalog, this.cachedOverrides);
+    if (resolved.matched && !resolved.fromOverride && this.cursorTokenFeePer1m > 0) {
+      return {
+        matched: resolved.matched,
+        matchedKey: resolved.matchedKey,
+        rates: applyCursorTokenFee(
+          resolved.matchedKey ?? modelKey,
+          resolved.rates,
+          this.cursorTokenFeePer1m,
+        ),
+      };
+    }
+    return {
+      matched: resolved.matched,
+      matchedKey: resolved.matchedKey,
+      rates: resolved.rates,
+    };
+  }
+
+  getCursorTokenFeePer1m(): number {
+    return this.cursorTokenFeePer1m;
   }
 
   listPricing(): ModelPricing[] {

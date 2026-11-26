@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * Tarifas por defecto (USD por 1M de tokens) para la PoC offline de Fase 1.
- * En Fase 2 el backend enriquecerá estas tarifas con OpenRouter + LiteLLM.
+ * Tarifas base offline (USD por 1M de tokens) usadas cuando el backend local
+ * (que sincroniza https://models.dev/api.json) no está disponible.
  */
 export const DEFAULT_MODEL_RATES = {
   'claude-3.5-sonnet': {
@@ -55,10 +55,10 @@ export const DEFAULT_MODEL_RATES = {
     output_per_1m: 2.5,
   },
   'claude-haiku-5.5': {
-    input_per_1m: 0.05,
-    cache_read_per_1m: 0.005,
-    cache_write_per_1m: 0.0625,
-    output_per_1m: 0.25,
+    input_per_1m: 0.1,
+    cache_read_per_1m: 0.01,
+    cache_write_per_1m: 0.125,
+    output_per_1m: 0.5,
   },
   'gpt-4o': {
     input_per_1m: 2.5,
@@ -102,6 +102,12 @@ export const DEFAULT_MODEL_RATES = {
     cache_write_per_1m: 1.1,
     output_per_1m: 4.4,
   },
+  'gemini-4-neon': {
+    input_per_1m: 3.0,
+    cache_read_per_1m: 0.15,
+    cache_write_per_1m: 3.0,
+    output_per_1m: 15.0,
+  },
   'gemini-2.5-pro': {
     input_per_1m: 1.25,
     cache_read_per_1m: 0.31,
@@ -137,16 +143,40 @@ export function normalizeModelKey(model) {
   if (key.includes('/')) {
     key = key.split('/').pop() || key;
   }
-  // Quita sufijos encadenados comunes tipo -thinking-high, -20250219, -max, :free
+  // Quita sufijos encadenados comunes tipo -thinking-high, -20250219, -2024-08-06, -max, :free
   key = key.replace(/:.*$/, '');
   let prev;
   do {
     prev = key;
-    key = key.replace(/-(20\d{6}|thinking|max|high|medium|low|fast|preview|latest)$/, '');
+    key = key.replace(
+      /-(20\d{2}-\d{2}-\d{2}|20\d{6}|thinking|max|xhigh|high|medium|low|fast|preview|latest)$/,
+      '',
+    );
   } while (key !== prev);
   // Unificar versión con guión a punto (ej. claude-haiku-5-5 -> claude-haiku-5.5)
   key = key.replace(/(\d)-(\d)(?!\d)/g, '$1.$2');
   return key;
+}
+
+export const CURSOR_TOKEN_FEE_CACHE_READ_THRESHOLD = 0.1;
+const CURSOR_FIRST_PARTY_PATTERNS = ['composer', 'grok', 'cursor-small', 'auto'];
+
+export function applyCursorTokenFee(modelKey, rates, tokenFeePer1m) {
+  const fee = Number(tokenFeePer1m);
+  if (!Number.isFinite(fee) || fee <= 0) return rates;
+  const normalized = normalizeModelKey(modelKey);
+  if (CURSOR_FIRST_PARTY_PATTERNS.some((p) => normalized === p || normalized.includes(p))) {
+    return rates;
+  }
+  if (Number(rates?.cache_read_per_1m || 0) < CURSOR_TOKEN_FEE_CACHE_READ_THRESHOLD) {
+    return rates;
+  }
+  return {
+    input_per_1m: Number(((Number(rates?.input_per_1m) || 0) + fee).toFixed(6)),
+    cache_read_per_1m: Number(((Number(rates?.cache_read_per_1m) || 0) + fee).toFixed(6)),
+    cache_write_per_1m: Number(((Number(rates?.cache_write_per_1m) || 0) + fee).toFixed(6)),
+    output_per_1m: Number(((Number(rates?.output_per_1m) || 0) + fee).toFixed(6)),
+  };
 }
 
 /**
@@ -172,27 +202,33 @@ export function loadPricingOverrides(overridePaths = []) {
 /**
  * Resuelve la tarifa para un modelo buscando coincidencia exacta, normalizada o por prefijo.
  */
-export function resolveModelRates(model, overrides = {}) {
+export function resolveModelRates(model, overrides = {}, { tokenFeePer1m = 0 } = {}) {
   const catalog = { ...DEFAULT_MODEL_RATES, ...overrides };
   const rawLower = typeof model === 'string' ? model.trim().toLowerCase() : '';
   const normalized = normalizeModelKey(model);
 
+  const hasOverride = (key) => Object.prototype.hasOwnProperty.call(overrides, key);
+  const finalize = (rates, key) => ({
+    rates: hasOverride(key) ? rates : applyCursorTokenFee(key, rates, tokenFeePer1m),
+    matched: true,
+  });
+
   if (rawLower && catalog[rawLower]) {
-    return { rates: catalog[rawLower], matched: true };
+    return finalize(catalog[rawLower], rawLower);
   }
   if (catalog[normalized]) {
-    return { rates: catalog[normalized], matched: true };
+    return finalize(catalog[normalized], normalized);
   }
 
   // Coincidencia parcial (ej. claude-3.7-sonnet-20250219 -> claude-3.7-sonnet)
   const keys = Object.keys(catalog).sort((a, b) => b.length - a.length);
   for (const key of keys) {
     if (normalized.includes(key) || rawLower.includes(key)) {
-      return { rates: catalog[key], matched: true };
+      return finalize(catalog[key], key);
     }
   }
 
-  // Fallback por familia de modelo (para versiones nuevas antes de sincronizar OpenRouter en Fase 2)
+  // Fallback por familia de modelo (para versiones nuevas offline sin conexión a models.dev)
   const familyFallbacks = [
     ['haiku', 'claude-haiku-5.5'],
     ['sonnet', 'claude-4-sonnet'],
@@ -206,7 +242,7 @@ export function resolveModelRates(model, overrides = {}) {
   ];
   for (const [needle, fallbackKey] of familyFallbacks) {
     if (normalized.includes(needle) && catalog[fallbackKey]) {
-      return { rates: catalog[fallbackKey], matched: true };
+      return finalize(catalog[fallbackKey], fallbackKey);
     }
   }
 

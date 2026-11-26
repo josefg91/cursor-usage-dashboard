@@ -13,6 +13,7 @@ async function bootstrap() {
     payloadRetentionDays: config.payloadRetentionDays,
     overridesPath: config.overridesPath,
     pricingCacheTtlHours: config.pricingCacheTtlHours,
+    cursorTokenFeePer1m: config.cursorTokenFeePer1m,
     bufferPath: config.bufferPath,
     logger: true,
   });

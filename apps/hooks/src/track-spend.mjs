@@ -173,11 +173,15 @@ function extractModelParams(ev) {
  * Recalcula coste al vuelo si un evento guardado previamente tenía cost_usd = 0
  * (por ejemplo, cuando se añade una tarifa nueva al catálogo).
  */
-export function enrichEventsWithPricing(events, overrides = {}) {
+export function enrichEventsWithPricing(
+  events,
+  overrides = {},
+  tokenFeePer1m = Number(process.env.CURSOR_TOKEN_FEE_PER_1M || 0),
+) {
   return events.map((ev) => {
     if (Number(ev.cost_usd) > 0) return ev;
     const modelForRates = ev?.raw_hook_json?.model_id || ev.model;
-    const { rates, matched } = resolveModelRates(modelForRates, overrides);
+    const { rates, matched } = resolveModelRates(modelForRates, overrides, { tokenFeePer1m });
     if (!matched) return ev;
     const { uncached_input_tokens, cost_usd } = calculateTurnCost(
       {
@@ -333,7 +337,8 @@ export function handleHookEvent(
 
     const overrides = loadPricingOverrides(overridePaths);
     const modelForRates = parsed.raw_hook_json?.model_id || model;
-    const { rates } = resolveModelRates(modelForRates, overrides);
+    const tokenFeePer1m = Number(process.env.CURSOR_TOKEN_FEE_PER_1M || 0);
+    const { rates } = resolveModelRates(modelForRates, overrides, { tokenFeePer1m });
     const { uncached_input_tokens, cost_usd } = calculateTurnCost(
       {
         input_tokens: parsed.input_tokens,

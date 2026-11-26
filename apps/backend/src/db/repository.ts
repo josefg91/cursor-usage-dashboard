@@ -471,8 +471,15 @@ export class TelemetryRepository {
     };
   }
 
-  upsertPricingBatch(items: ModelPricing[]): void {
-    const stmt = this.db.prepare(`
+  /**
+   * Reemplaza de forma atómica todas las tarifas remotas (`isOverride = false`)
+   * o locales (`isOverride = true`), purgando entradas obsoletas sin afectar al otro grupo.
+   */
+  replacePricingByOverride(items: ModelPricing[], isOverride: boolean): void {
+    const flag = isOverride ? 1 : 0;
+    const deleteStmt = this.db.prepare('DELETE FROM model_pricing WHERE is_override = ?');
+    const conflictGuard = isOverride ? '' : ' WHERE model_pricing.is_override = 0';
+    const insertStmt = this.db.prepare(`
       INSERT INTO model_pricing (
         model_key, input_per_1m, cache_read_per_1m, cache_write_per_1m, output_per_1m, updated_at, is_override
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -482,20 +489,21 @@ export class TelemetryRepository {
         cache_write_per_1m = excluded.cache_write_per_1m,
         output_per_1m = excluded.output_per_1m,
         updated_at = excluded.updated_at,
-        is_override = excluded.is_override
+        is_override = excluded.is_override${conflictGuard}
     `);
 
     this.db.exec('BEGIN');
     try {
+      deleteStmt.run(flag);
       for (const item of items) {
-        stmt.run(
+        insertStmt.run(
           item.model_key,
           item.input_per_1m,
           item.cache_read_per_1m,
           item.cache_write_per_1m,
           item.output_per_1m,
           item.updated_at,
-          item.is_override ? 1 : 0,
+          flag,
         );
       }
       this.db.exec('COMMIT');

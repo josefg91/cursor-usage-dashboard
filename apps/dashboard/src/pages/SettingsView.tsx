@@ -25,8 +25,7 @@ export function SettingsView() {
   const refreshMutation = useMutation({
     mutationFn: apiClient.refreshPricing,
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['pricing'] });
-      void queryClient.invalidateQueries({ queryKey: ['health'] });
+      void queryClient.invalidateQueries();
     },
   });
 
@@ -68,8 +67,13 @@ export function SettingsView() {
               Ajustes, Tarifas y Diagnóstico Local
             </h2>
             <p className="mt-1 text-xs text-slate-400">
-              Catálogo en caché SQLite (OpenRouter + LiteLLM +{' '}
+              Catálogo en caché SQLite (<code className="text-slate-300">models.dev</code> +{' '}
               <code className="text-slate-300">pricing-overrides.json</code>).
+              {pricing?.cursor_token_fee_per_1m ? (
+                <span className="ml-2 inline-flex items-center rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] text-amber-300">
+                  + ${pricing.cursor_token_fee_per_1m.toFixed(2)}/1M Cursor Token Rate
+                </span>
+              ) : null}
             </p>
           </div>
 
@@ -101,7 +105,12 @@ export function SettingsView() {
         {refreshMutation.data && (
           <p className="mt-3 text-xs text-emerald-400">
             Catálogo actualizado ({refreshMutation.data.count} modelos desde{' '}
-            {refreshMutation.data.source}).
+            {refreshMutation.data.source}
+            {typeof refreshMutation.data.recalculated_events === 'number' &&
+            refreshMutation.data.recalculated_events > 0
+              ? ` · ${refreshMutation.data.recalculated_events} eventos recalculados`
+              : ''}
+            ).
           </p>
         )}
 

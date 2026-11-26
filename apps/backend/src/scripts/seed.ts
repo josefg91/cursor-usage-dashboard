@@ -107,7 +107,7 @@ const SAMPLES: SeedSample[] = [
     conversation_id: 'seed-session-yesterday-1',
     model: 'claude-4-opus',
     prompt_text: 'Audita la arquitectura completa de seguridad Enterprise para asegurar 0 fugas de prompts.',
-    response_text: 'Revisados todos los flujos: solo GET público a OpenRouter/LiteLLM, 127.0.0.1 local y sin telemetría externa.',
+    response_text: 'Revisados todos los flujos: solo GET público a models.dev, 127.0.0.1 local y sin telemetría externa.',
     input_tokens: 75_000,
     cache_read_tokens: 50_000,
     cache_write_tokens: 15_000,
@@ -141,19 +141,26 @@ const SAMPLES: SeedSample[] = [
 ];
 
 function runSeed() {
-  const clear = process.argv.includes('--clear');
+  const clearOnly = process.argv.includes('--clear-only');
+  const clear = clearOnly || process.argv.includes('--clear');
   const config = loadConfig();
   const db = initDatabase(config.dbPath);
+
+  if (clear) {
+    const result = db.prepare("DELETE FROM prompt_events WHERE id LIKE 'seed-%'").run();
+    console.log(`Eventos de seed previos eliminados: ${result.changes}.`);
+  }
+
+  if (clearOnly) {
+    db.close();
+    return;
+  }
+
   const repo = new TelemetryRepository(db);
   const pricingService = new PricingService(repo, {
     overridesPath: config.overridesPath,
     cacheTtlHours: config.pricingCacheTtlHours,
   });
-
-  if (clear) {
-    db.prepare("DELETE FROM prompt_events WHERE id LIKE 'seed-%'").run();
-    console.log('Eventos de seed previos eliminados.');
-  }
 
   const now = Date.now();
   let insertedCount = 0;

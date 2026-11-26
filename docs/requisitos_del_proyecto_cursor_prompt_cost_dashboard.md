@@ -22,7 +22,7 @@
 |---|---------------|-------------|-----------|
 | RF-01 | **Captura automática vía Cursor Hooks** | Interceptar en local los eventos `beforeSubmitPrompt`, `afterAgentResponse` y `stop` mediante `~/.cursor/hooks.json` para capturar el texto del prompt, la respuesta, el modelo, el `conversation_id` y el desglose de tokens (entrada, caché lectura/escritura, salida y razonamiento). | 🔴 Alta |
 | RF-02 | **PoC / Consulta rápida del gasto de hoy** | Permitir consultar desde terminal (CLI) y en el dashboard el gasto acumulado del día actual en USD y su desglose por modelo. | 🔴 Alta |
-| RF-03 | **Motor de cálculo de costes por modelo** | Calcular el coste estimado en USD por cada turno descontando correctamente los tokens de caché del total de entrada, usando un catálogo dinámico de precios (API pública de OpenRouter + fallback LiteLLM + archivo local `pricing-overrides.json`). | 🔴 Alta |
+| RF-03 | **Motor de cálculo de costes por modelo** | Calcular el coste estimado en USD por cada turno descontando correctamente los tokens de caché del total de entrada, usando un catálogo dinámico de precios (API pública de `models.dev` + archivo local `pricing-overrides.json` + fallback offline). | 🔴 Alta |
 | RF-04 | **Persistencia local eficiente (SQLite)** | Guardar metadatos y métricas ligeras en SQLite (modo `WAL`) separadas de los textos completos comprimidos con `gzip`, con respaldo en archivo `.jsonl` si el backend local estuviera apagado durante el envío del hook. | 🔴 Alta |
 | RF-05 | **Panel de KPIs de eficiencia** | Mostrar en tiempo real: Gasto Total (USD), Coste Medio por Prompt/Sesión, Ratio Entrada/Salida (con alerta si supera 20:1) y Eficiencia de Caché (%). | 🔴 Alta |
 | RF-06 | **Tabla de prompts e historial en vivo** | Listar los prompts lanzados con auto-refresco (cada 5 s, pausable), filtros por rango temporal (Hoy, 7d, 30d, Todo) y modelo, buscador de texto y semáforo visual de coste (`< $0.05` normal, `$0.05–$0.15` ámbar, `> $0.15` rojo). | 🔴 Alta |
@@ -84,7 +84,7 @@
 | **Base de datos** | SQLite (`better-sqlite3` o `node:sqlite` nativo en Node 22+) | Archivo único local (`./data/telemetry.sqlite`), modo `WAL` y compresión `zlib.gzipSync` para textos largos. |
 | **Autenticación** | No requerida (entorno `127.0.0.1`) | El backend escucha únicamente en `localhost`. |
 | **Hosting / Deploy** | 100% Local | Arranque unificado con un solo comando (`pnpm dev`). |
-| **APIs externas** | Catálogo de precios público (OpenRouter / LiteLLM) | Solo lectura GET puntual (cacheado 24 h en disco) para mantener tarifas actualizadas sin enviar datos privados. |
+| **APIs externas** | Catálogo de precios público (`models.dev`) | Solo lectura GET puntual (`https://models.dev/api.json`, cacheado 24 h en disco) para mantener tarifas actualizadas sin enviar datos privados. |
 | **Testing** | Vitest | Tests unitarios obligatorios para la fórmula de costes y el parser de eventos de hooks. |
 
 ---
@@ -147,8 +147,7 @@ Distribución vertical de la pantalla principal:
 | Servicio | Propósito | ¿Tienes API key? |
 |----------|-----------|------------------|
 | **Cursor Hooks** (Local nativo) | Fuente principal en tiempo real de prompts, modelo y tokens sin salir de la máquina. | No requiere |
-| **OpenRouter Models API** (`https://openrouter.ai/api/v1/models`) | Descargar catálogo público de precios por millón de tokens (solo lectura, sin enviar datos). | No requiere (endpoint público) |
-| **LiteLLM Pricing JSON** (GitHub raw) | Fallback secundario para tarifas de modelos no encontrados en OpenRouter. | No requiere |
+| **models.dev API** (`https://models.dev/api.json`) | Descargar catálogo público de precios por millón de tokens por proveedor (solo lectura, sin enviar datos). | No requiere (endpoint público) |
 | **Cursor Admin API** (`https://api.cursor.com/teams/filtered-usage-events`) | *(Opcional Post-MVP)* Obtener gasto exacto facturado (`chargedCents`) en cuenta Enterprise. | No confirmada (requiere permiso de Admin de IT) |
 
 ---
@@ -183,7 +182,7 @@ Distribución vertical de la pantalla principal:
 
 ### Fase 2 - Backend, Base de Datos y Motor de Precios (MVP Core)
 - [x] Inicializar monorepo TypeScript (`packages/shared`, `apps/backend`, `apps/dashboard`, `apps/hooks`).
-- [x] Implementar fórmula de precios con tests unitarios en `packages/shared` y servicio de tarifas (OpenRouter + LiteLLM + overrides).
+- [x] Implementar fórmula de precios con tests unitarios en `packages/shared` y servicio de tarifas (`models.dev` + overrides locales + fallback offline).
 - [x] Crear base de datos SQLite (`WAL` + `gzip`) y endpoints REST (`POST /api/events`, `GET /api/health`, `GET /api/stats/summary`, `GET /api/stats/by-model`, `GET /api/stats/timeseries`, `GET /api/prompts`, `GET /api/prompts/:id`).
 - [x] Conectar los Cursor Hooks al backend local con fallback automático a buffer `.jsonl`.
 

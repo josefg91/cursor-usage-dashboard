@@ -72,9 +72,17 @@ export const apiClient = {
     );
   },
   getPromptDetail: (id: string) => fetchJson<PromptEventDetail>(`/api/prompts/${id}`),
-  getPricing: () => fetchJson<{ models: ModelPricing[]; count: number }>('/api/pricing'),
+  getPricing: () =>
+    fetchJson<{ models: ModelPricing[]; count: number; cursor_token_fee_per_1m?: number }>(
+      '/api/pricing',
+    ),
   refreshPricing: () =>
-    fetchJson<{ refreshed: boolean; count: number; source: string }>('/api/pricing/refresh', {
+    fetchJson<{
+      refreshed: boolean;
+      count: number;
+      source: string;
+      recalculated_events?: number;
+    }>('/api/pricing/refresh', {
       method: 'POST',
     }),
   syncBuffer: () =>

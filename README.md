@@ -13,6 +13,7 @@ cursor-dashboard/
 │   ├── dashboard/       # Interfaz web oscura (React 19 + Vite + Tailwind v4 + TanStack Query + Recharts)
 │   └── hooks/           # Scripts ESM ligeros para Cursor Hooks (~/.cursor/hooks.json) sin deps externas
 ├── data/                # Base de datos SQLite local (ignorado en git)
+├── docs/                # Documentación de requisitos del proyecto
 ├── .env.example
 └── pricing-overrides.example.json
 ```
@@ -41,7 +42,7 @@ pnpm seed
 pnpm dev
 ```
 
-Abre **http://localhost:5173** en tu navegador. Al arrancar, el backend sincroniza automáticamente cualquier evento acumulado en `~/.cursor/spend-buffer.jsonl` y refresca el catálogo de tarifas (OpenRouter + fallback LiteLLM + `pricing-overrides.json`, cacheado 24 h).
+Abre **http://localhost:5173** en tu navegador. Al arrancar, el backend sincroniza automáticamente cualquier evento acumulado en `~/.cursor/spend-buffer.jsonl` y refresca el catálogo de tarifas desde `https://models.dev/api.json` (+ `pricing-overrides.json`, cacheado 24 h).
 
 ## Uso por CLI (Cursor Hooks)
 
@@ -82,9 +83,10 @@ node apps/hooks/src/install-hooks.mjs --uninstall
 
 - [ ] **Cursor Enterprise Admin API (`RF-11`):** sincronización automática vía `POST https://api.cursor.com/teams/filtered-usage-events` (pendiente de disponer de una `CURSOR_ADMIN_KEY` corporativa de IT).
 
-## Tarifas personalizadas (`pricing-overrides.json`)
+## Tarifas personalizadas y recargo Cursor Enterprise
 
-Copia [pricing-overrides.example.json](pricing-overrides.example.json) a `pricing-overrides.json` en la raíz del proyecto para sobrescribir tarifas en USD por millón de tokens (tienen prioridad sobre OpenRouter y LiteLLM).
+- **Overrides por modelo (`pricing-overrides.json`):** copia [pricing-overrides.example.json](pricing-overrides.example.json) a `pricing-overrides.json` en la raíz del proyecto para sobrescribir tarifas en USD por millón de tokens (tienen prioridad sobre `models.dev` y no acumulan el recargo adicional).
+- **Cursor Token Rate (`CURSOR_TOKEN_FEE_PER_1M`):** variable opcional en `.env` (por defecto `0`). En planes Teams/Enterprise, Cursor aplica un recargo de plataforma (tarifa pública: `0.25` USD por 1M de tokens) sobre modelos de terceros con `cache_read >= $0.10/1M`. Configúrala en `.env` si deseas aproximar ese recargo en tiempo real.
 
 ## Comandos de desarrollo
 
@@ -93,4 +95,5 @@ pnpm typecheck   # Verificación TypeScript (strict: true) y sintaxis de hooks
 pnpm test        # Tests unitarios y de integración (Vitest)
 pnpm build       # Compilación de todos los paquetes y bundle de Vite
 pnpm seed        # Inserta datos simulados en SQLite (usa --clear para reiniciarlos)
+pnpm seed:clear  # Elimina solo los datos simulados sin afectar a tus eventos reales
 ```

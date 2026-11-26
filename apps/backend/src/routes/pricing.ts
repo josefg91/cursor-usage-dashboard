@@ -6,6 +6,7 @@ export async function pricingRoutes(app: FastifyInstance, deps: RouteDeps): Prom
     return {
       models: deps.pricingService.listPricing(),
       count: deps.pricingService.getCatalogCount(),
+      cursor_token_fee_per_1m: deps.pricingService.getCursorTokenFeePer1m(),
     };
   });
 

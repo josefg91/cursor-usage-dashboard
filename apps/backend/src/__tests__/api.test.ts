@@ -127,55 +127,137 @@ describe('Backend API + SQLite + PricingService', () => {
     }
   });
 
-  it('refresca catálogo desde OpenRouter mock y soporta ingesta idempotente desde spend-buffer.jsonl', async () => {
+  it('refresca catálogo desde models.dev, prioriza proveedores oficiales, purga obsoletos y soporta CURSOR_TOKEN_FEE_PER_1M', async () => {
     const tmpDir = createTempDir();
     const bufferPath = path.join(tmpDir, 'spend-buffer.jsonl');
+    const overridesPath = path.join(tmpDir, 'pricing-overrides.json');
+    fs.writeFileSync(
+      overridesPath,
+      JSON.stringify({
+        'custom-override-model': {
+          input_per_1m: 1.0,
+          cache_read_per_1m: 0.2,
+          cache_write_per_1m: 1.0,
+          output_per_1m: 4.0,
+        },
+      }),
+    );
     fs.writeFileSync(
       bufferPath,
       `${JSON.stringify({
         id: 'buf-1',
         conversation_id: 'conv-buf',
         timestamp: new Date().toISOString(),
-        model: 'acme/super-model',
+        model: 'gemini-4-neon-medium',
         prompt_text: 'Hola desde buffer offline',
-        input_tokens: 10_000,
-        cache_read_tokens: 0,
+        input_tokens: 1_000_000,
+        cache_read_tokens: 800_000,
         cache_write_tokens: 0,
-        output_tokens: 1_000,
+        output_tokens: 10_000,
       })}\n`,
     );
 
     const mockFetch: typeof fetch = async () =>
       new Response(
         JSON.stringify({
-          data: [
-            {
-              id: 'acme/super-model',
-              pricing: {
-                prompt: '0.000002',
-                completion: '0.00001',
-                input_cache_read: '0.0000002',
-                input_cache_write: '0.0000025',
+          openrouter: {
+            id: 'openrouter',
+            models: {
+              'google/gemini-4-neon:batch': {
+                id: 'google/gemini-4-neon:batch',
+                cost: { input: 1.5, output: 7.5, cache_read: 0.075 },
+              },
+              'google/gemini-4-neon': {
+                id: 'google/gemini-4-neon',
+                cost: { input: 9.99, output: 99.99, cache_read: 0.99 },
+              },
+              'acme/super-model': {
+                id: 'acme/super-model',
+                cost: { input: 2.0, output: 10.0, cache_read: 0.2, cache_write: 2.5 },
               },
             },
-          ],
+          },
+          google: {
+            id: 'google',
+            models: {
+              'gemini-4-neon': {
+                id: 'gemini-4-neon',
+                cost: { input: 3.0, output: 15.0, cache_read: 0.15 },
+              },
+              'gemini-4-neon:batch': {
+                id: 'gemini-4-neon:batch',
+                cost: { input: 1.5, output: 7.5, cache_read: 0.075 },
+              },
+            },
+          },
+          anthropic: {
+            id: 'anthropic',
+            models: {
+              'claude-haiku-5-5': {
+                id: 'claude-haiku-5-5',
+                cost: { input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125 },
+              },
+            },
+          },
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       );
 
     const db = initDatabase(':memory:');
+    // Sembrar una fila remota obsoleta de OpenRouter para verificar que se purga al refrescar
+    db.prepare(
+      `INSERT INTO model_pricing (model_key, input_per_1m, cache_read_per_1m, cache_write_per_1m, output_per_1m, updated_at, is_override)
+       VALUES ('obsolete-openrouter-model', 1, 0.1, 1, 5, '2026-01-01T00:00:00.000Z', 0)`,
+    ).run();
+
     const { app, repo, pricingService } = await buildApp({
       db,
-      overridesPath: path.join(tmpDir, 'pricing-overrides.json'),
+      overridesPath,
       pricingCacheTtlHours: 24,
+      cursorTokenFeePer1m: 0.25,
       bufferPath,
       fetchFn: mockFetch,
     });
 
     try {
-      const refresh = await pricingService.refreshCatalog();
-      expect(refresh.source).toBe('openrouter');
-      expect(refresh.count).toBe(1);
+      const refreshRes = await app.inject({ method: 'POST', url: '/api/pricing/refresh' });
+      expect(refreshRes.statusCode).toBe(200);
+      const refresh = refreshRes.json();
+      expect(refresh.source).toBe('models.dev');
+      expect(refresh.count).toBe(3);
+
+      // La fila obsoleta fue purgada y el override local se mantuvo intacto
+      const pricingRes = await app.inject({ method: 'GET', url: '/api/pricing' });
+      expect(pricingRes.statusCode).toBe(200);
+      const pricingBody = pricingRes.json();
+      expect(pricingBody.cursor_token_fee_per_1m).toBe(0.25);
+      const keys = pricingBody.models.map((m: { model_key: string }) => m.model_key);
+      expect(keys).not.toContain('obsolete-openrouter-model');
+      expect(keys).toContain('custom-override-model');
+      expect(keys).toContain('gemini-4-neon');
+
+      // El proveedor oficial `google` prevaleció sobre `openrouter` y `:batch`
+      const neonStored = pricingBody.models.find(
+        (m: { model_key: string }) => m.model_key === 'gemini-4-neon',
+      );
+      expect(neonStored.input_per_1m).toBe(3.0);
+      expect(neonStored.cache_read_per_1m).toBe(0.15);
+      expect(neonStored.output_per_1m).toBe(15.0);
+
+      // Con cursorTokenFeePer1m = 0.25: gemini-4-neon (cache_read >= 0.10) suma +0.25/1M
+      const neonEffective = pricingService.getRates('gemini-4-neon-medium');
+      expect(neonEffective.rates.input_per_1m).toBe(3.25);
+      expect(neonEffective.rates.cache_read_per_1m).toBe(0.4);
+      expect(neonEffective.rates.output_per_1m).toBe(15.25);
+
+      // claude-haiku-5.5 (cache_read = 0.01 < 0.10) queda exento del recargo
+      const haikuEffective = pricingService.getRates('claude-haiku-5-5-thinking-high');
+      expect(haikuEffective.rates.input_per_1m).toBe(0.1);
+      expect(haikuEffective.rates.cache_read_per_1m).toBe(0.01);
+
+      // Overrides locales no acumulan el recargo adicional
+      const overrideEffective = pricingService.getRates('custom-override-model');
+      expect(overrideEffective.rates.input_per_1m).toBe(1.0);
 
       const firstIngest = ingestBufferFile(bufferPath, repo, pricingService);
       expect(firstIngest).toEqual({ processed: 1, inserted: 1 });
@@ -184,8 +266,31 @@ describe('Backend API + SQLite + PricingService', () => {
       expect(secondIngest).toEqual({ processed: 1, inserted: 0 });
 
       const detail = repo.getPromptDetail('buf-1');
-      // 10k * 2 / 1M = 0.02 + 1k * 10 / 1M = 0.01 => 0.03
-      expect(detail?.cost_usd).toBeCloseTo(0.03, 6);
+      // uncached 200k * 3.25/1M = 0.65 + cache_read 800k * 0.40/1M = 0.32 + out 10k * 15.25/1M = 0.1525 => 1.1225
+      expect(detail?.cost_usd).toBeCloseTo(1.1225, 6);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('usa fallback offline defaults si models.dev no responde', async () => {
+    const tmpDir = createTempDir();
+    const db = initDatabase(':memory:');
+    const { app, pricingService } = await buildApp({
+      db,
+      overridesPath: path.join(tmpDir, 'pricing-overrides.json'),
+      pricingCacheTtlHours: 24,
+      bufferPath: path.join(tmpDir, 'spend-buffer.jsonl'),
+      fetchFn: async () => {
+        throw new Error('ENOTFOUND');
+      },
+    });
+
+    try {
+      const refresh = await pricingService.refreshCatalog();
+      expect(refresh.source).toBe('defaults');
+      expect(refresh.count).toBeGreaterThan(0);
+      expect(pricingService.getRates('gemini-4-neon-medium').rates.input_per_1m).toBe(3.0);
     } finally {
       await app.close();
     }

@@ -2,7 +2,7 @@ import type { ModelRates, PricingOverridesMap } from '../types/pricing.js';
 
 /**
  * Tarifas base offline (USD por 1M de tokens) usadas únicamente como fallback
- * si el catálogo de OpenRouter/LiteLLM no está disponible o no contiene el modelo.
+ * si el catálogo de models.dev no está disponible o no contiene el modelo.
  */
 export const DEFAULT_MODEL_RATES: PricingOverridesMap = {
   'claude-3.5-sonnet': {
@@ -54,10 +54,10 @@ export const DEFAULT_MODEL_RATES: PricingOverridesMap = {
     output_per_1m: 2.5,
   },
   'claude-haiku-5.5': {
-    input_per_1m: 0.05,
-    cache_read_per_1m: 0.005,
-    cache_write_per_1m: 0.0625,
-    output_per_1m: 0.25,
+    input_per_1m: 0.1,
+    cache_read_per_1m: 0.01,
+    cache_write_per_1m: 0.125,
+    output_per_1m: 0.5,
   },
   'gpt-4o': {
     input_per_1m: 2.5,
@@ -101,6 +101,12 @@ export const DEFAULT_MODEL_RATES: PricingOverridesMap = {
     cache_write_per_1m: 1.1,
     output_per_1m: 4.4,
   },
+  'gemini-4-neon': {
+    input_per_1m: 3.0,
+    cache_read_per_1m: 0.15,
+    cache_write_per_1m: 3.0,
+    output_per_1m: 15.0,
+  },
   'gemini-2.5-pro': {
     input_per_1m: 1.25,
     cache_read_per_1m: 0.31,
@@ -128,8 +134,8 @@ export const DEFAULT_MODEL_RATES: PricingOverridesMap = {
 };
 
 /**
- * Normaliza identificadores de modelo entre Cursor y OpenRouter/LiteLLM:
- * - Quita prefijo de proveedor (`anthropic/`) y sufijos encadenados (`-thinking-high`, `-20250219`)
+ * Normaliza identificadores de modelo entre Cursor y models.dev:
+ * - Quita prefijo de proveedor (`anthropic/`) y sufijos encadenados (`-thinking-high`, `-20250219`, `-2024-08-06`)
  * - Unifica versiones con guión a punto (`5-5` -> `5.5`, `3-7` -> `3.7`)
  */
 export function normalizeModelKey(model: string): string {
@@ -142,11 +148,56 @@ export function normalizeModelKey(model: string): string {
   let prev = '';
   while (key !== prev) {
     prev = key;
-    key = key.replace(/-(20\d{6}|thinking|max|high|medium|low|fast|preview|latest)$/, '');
+    key = key.replace(
+      /-(20\d{2}-\d{2}-\d{2}|20\d{6}|thinking|max|xhigh|high|medium|low|fast|preview|latest)$/,
+      '',
+    );
   }
   // Unificar separador de versión menor (ej. claude-haiku-5-5 -> claude-haiku-5.5)
   key = key.replace(/(\d)-(\d)(?!\d)/g, '$1.$2');
   return key;
+}
+
+/**
+ * Umbral oficial de Cursor: los modelos de terceros cuyo cache_read es estrictamente
+ * inferior a $0.10 / 1M tokens están exentos del Cursor Token Rate.
+ */
+export const CURSOR_TOKEN_FEE_CACHE_READ_THRESHOLD = 0.1;
+
+const CURSOR_FIRST_PARTY_PATTERNS = ['composer', 'grok', 'cursor-small', 'auto'];
+
+export function isCursorFirstPartyModel(modelKey: string): boolean {
+  const normalized = normalizeModelKey(modelKey);
+  return CURSOR_FIRST_PARTY_PATTERNS.some(
+    (needle) => normalized === needle || normalized.includes(needle),
+  );
+}
+
+/**
+ * Aplica el recargo opcional Cursor Token Rate (USD por 1M tokens) sobre entrada,
+ * caché y salida en modelos de terceros elegibles (cache_read >= $0.10 / 1M).
+ */
+export function applyCursorTokenFee(
+  modelKey: string,
+  rates: ModelRates,
+  tokenFeePer1m: number,
+): ModelRates {
+  if (!Number.isFinite(tokenFeePer1m) || tokenFeePer1m <= 0) {
+    return rates;
+  }
+  if (isCursorFirstPartyModel(modelKey)) {
+    return rates;
+  }
+  if (rates.cache_read_per_1m < CURSOR_TOKEN_FEE_CACHE_READ_THRESHOLD) {
+    return rates;
+  }
+
+  return {
+    input_per_1m: Number((rates.input_per_1m + tokenFeePer1m).toFixed(6)),
+    cache_read_per_1m: Number((rates.cache_read_per_1m + tokenFeePer1m).toFixed(6)),
+    cache_write_per_1m: Number((rates.cache_write_per_1m + tokenFeePer1m).toFixed(6)),
+    output_per_1m: Number((rates.output_per_1m + tokenFeePer1m).toFixed(6)),
+  };
 }
 
 const FAMILY_FALLBACKS: Array<[string, string]> = [
@@ -197,37 +248,42 @@ function lookupInMap(
 /**
  * Resuelve tarifas en orden estricto de prioridad:
  * 1. Overrides locales (`pricing-overrides.json`)
- * 2. Catálogo remoto cacheado en SQLite (OpenRouter / LiteLLM)
+ * 2. Catálogo remoto cacheado en SQLite (`models.dev`)
  * 3. Tarifas base offline (`DEFAULT_MODEL_RATES`) + fallback por familia
  */
 export function resolveModelRates(
   model: string,
   catalog: PricingOverridesMap,
   overrides: PricingOverridesMap = {},
-): { rates: ModelRates; matched: boolean; matchedKey: string | null } {
+): { rates: ModelRates; matched: boolean; matchedKey: string | null; fromOverride: boolean } {
   const rawLower = model.trim().toLowerCase();
   const normalized = normalizeModelKey(model);
 
   const fromOverrides = lookupInMap(rawLower, normalized, overrides);
   if (fromOverrides) {
-    return { ...fromOverrides, matched: true };
+    return { ...fromOverrides, matched: true, fromOverride: true };
   }
 
   const fromCatalog = lookupInMap(rawLower, normalized, catalog);
   if (fromCatalog) {
-    return { ...fromCatalog, matched: true };
+    return { ...fromCatalog, matched: true, fromOverride: false };
   }
 
   const fromDefaults = lookupInMap(rawLower, normalized, DEFAULT_MODEL_RATES);
   if (fromDefaults) {
-    return { ...fromDefaults, matched: true };
+    return { ...fromDefaults, matched: true, fromOverride: false };
   }
 
   const merged: PricingOverridesMap = { ...DEFAULT_MODEL_RATES, ...catalog, ...overrides };
   for (const [needle, fallbackKey] of FAMILY_FALLBACKS) {
     const fallbackRates = merged[fallbackKey];
     if (normalized.includes(needle) && fallbackRates) {
-      return { rates: fallbackRates, matched: true, matchedKey: fallbackKey };
+      return {
+        rates: fallbackRates,
+        matched: true,
+        matchedKey: fallbackKey,
+        fromOverride: Boolean(overrides[fallbackKey]),
+      };
     }
   }
 
@@ -240,5 +296,6 @@ export function resolveModelRates(
     },
     matched: false,
     matchedKey: null,
+    fromOverride: false,
   };
 }

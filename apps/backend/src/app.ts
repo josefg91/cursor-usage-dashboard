@@ -16,6 +16,7 @@ export interface BuildAppOptions {
   payloadRetentionDays?: number;
   overridesPath: string;
   pricingCacheTtlHours: number;
+  cursorTokenFeePer1m?: number;
   bufferPath: string;
   logger?: boolean;
   fetchFn?: typeof fetch;
@@ -30,6 +31,7 @@ export async function buildApp(options: BuildAppOptions): Promise<{
   const pricingService = new PricingService(repo, {
     overridesPath: options.overridesPath,
     cacheTtlHours: options.pricingCacheTtlHours,
+    cursorTokenFeePer1m: options.cursorTokenFeePer1m ?? 0,
     fetchFn: options.fetchFn,
   });
 

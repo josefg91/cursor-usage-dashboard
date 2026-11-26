@@ -66,6 +66,8 @@ describe('pricing.mjs', () => {
     expect(normalizeModelKey('anthropic/claude-3.7-sonnet-20250219')).toBe('claude-3.7-sonnet');
     expect(normalizeModelKey('claude-3.7-sonnet-thinking')).toBe('claude-3.7-sonnet');
     expect(normalizeModelKey('claude-haiku-5-5-thinking-high')).toBe('claude-haiku-5.5');
+    expect(normalizeModelKey('gpt-4o-2024-08-06')).toBe('gpt-4o');
+    expect(normalizeModelKey('gemini-4-neon-medium')).toBe('gemini-4-neon');
     expect(normalizeModelKey('openai/gpt-4o')).toBe('gpt-4o');
   });
 
@@ -87,17 +89,28 @@ describe('pricing.mjs', () => {
     expect(result.cost_usd).toBeCloseTo(0.1215, 6);
   });
 
-  it('aplica overrides locales por encima del catálogo por defecto', () => {
-    const { rates, matched } = resolveModelRates('custom-enterprise-model', {
-      'custom-enterprise-model': {
-        input_per_1m: 1.0,
-        cache_read_per_1m: 0.1,
-        cache_write_per_1m: 1.25,
-        output_per_1m: 5.0,
+  it('aplica overrides locales por encima del catálogo por defecto y respeta tokenFeePer1m', () => {
+    const { rates, matched } = resolveModelRates(
+      'custom-enterprise-model',
+      {
+        'custom-enterprise-model': {
+          input_per_1m: 1.0,
+          cache_read_per_1m: 0.1,
+          cache_write_per_1m: 1.25,
+          output_per_1m: 5.0,
+        },
       },
-    });
+      { tokenFeePer1m: 0.25 },
+    );
     expect(matched).toBe(true);
     expect(rates.output_per_1m).toBe(5.0);
+
+    const neonWithFee = resolveModelRates('gemini-4-neon-medium', {}, { tokenFeePer1m: 0.25 });
+    expect(neonWithFee.rates.input_per_1m).toBe(3.25);
+    expect(neonWithFee.rates.cache_read_per_1m).toBe(0.4);
+
+    const haikuWithFee = resolveModelRates('claude-haiku-5-5-high', {}, { tokenFeePer1m: 0.25 });
+    expect(haikuWithFee.rates.cache_read_per_1m).toBe(0.01);
   });
 });
 
