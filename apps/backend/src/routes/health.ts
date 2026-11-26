@@ -7,6 +7,8 @@ export interface RouteDeps {
   repo: TelemetryRepository;
   pricingService: PricingService;
   bufferPath: string;
+  dbPath: string;
+  payloadRetentionDays: number;
 }
 
 export async function healthRoutes(app: FastifyInstance, deps: RouteDeps): Promise<void> {

@@ -1,5 +1,13 @@
-import type { PromptEvent, PromptsViewMode, SessionSummary } from '@cursor-dashboard/shared';
-import { ChevronLeft, ChevronRight, Layers, List, Search } from 'lucide-react';
+import {
+  analyzeSessionEfficiency,
+  analyzeTurnEfficiency,
+  type PromptEvent,
+  type PromptsViewMode,
+  type SessionSummary,
+  type TimeRange,
+} from '@cursor-dashboard/shared';
+import { ChevronLeft, ChevronRight, Download, Layers, List, Search } from 'lucide-react';
+import { apiClient } from '../api/client';
 import {
   formatCompactTokens,
   formatDateTime,
@@ -10,6 +18,8 @@ import {
 } from '../utils/format';
 
 interface PromptsTableProps {
+  range: TimeRange;
+  selectedModel: string;
   view: PromptsViewMode;
   onViewChange: (view: PromptsViewMode) => void;
   search: string;
@@ -28,6 +38,8 @@ function isTurn(item: PromptEvent | SessionSummary): item is PromptEvent {
 }
 
 export function PromptsTable({
+  range,
+  selectedModel,
   view,
   onViewChange,
   search,
@@ -41,6 +53,8 @@ export function PromptsTable({
   onSelectEvent,
 }: PromptsTableProps) {
   const totalPages = Math.max(1, Math.ceil(total / limit));
+  const exportCsvUrl = apiClient.getExportUrl('csv', { range, model: selectedModel, search });
+  const exportJsonUrl = apiClient.getExportUrl('json', { range, model: selectedModel, search });
 
   return (
     <section className="rounded-xl border border-slate-800 bg-[#111827] p-5">
@@ -75,15 +89,33 @@ export function PromptsTable({
           </div>
         </div>
 
-        <div className="relative w-full sm:w-72">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Buscar prompt, modelo o sesión..."
-            className="w-full rounded-lg border border-slate-800 bg-[#0B0F19] py-1.5 pr-3 pl-8 text-xs text-slate-200 placeholder:text-slate-500 outline-none focus:border-purple-500"
-          />
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full sm:w-64">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Buscar prompt, modelo o sesión..."
+              className="w-full rounded-lg border border-slate-800 bg-[#0B0F19] py-1.5 pr-3 pl-8 text-xs text-slate-200 placeholder:text-slate-500 outline-none focus:border-purple-500"
+            />
+          </div>
+          <a
+            href={exportCsvUrl}
+            download
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-800 bg-[#0B0F19] px-2.5 py-1.5 text-xs text-slate-300 transition hover:border-slate-700 hover:text-white"
+          >
+            <Download className="h-3.5 w-3.5 text-emerald-400" />
+            CSV
+          </a>
+          <a
+            href={exportJsonUrl}
+            download
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-800 bg-[#0B0F19] px-2.5 py-1.5 text-xs text-slate-300 transition hover:border-slate-700 hover:text-white"
+          >
+            <Download className="h-3.5 w-3.5 text-blue-400" />
+            JSON
+          </a>
         </div>
       </div>
 
@@ -112,6 +144,7 @@ export function PromptsTable({
             <tbody className="divide-y divide-slate-800/70">
               {items.filter(isTurn).map((ev) => {
                 const severity = getCostSeverity(ev.cost_usd);
+                const alerts = analyzeTurnEfficiency(ev);
                 const cachePct =
                   ev.input_tokens > 0
                     ? Math.round((ev.cache_read_tokens / ev.input_tokens) * 100)
@@ -134,8 +167,27 @@ export function PromptsTable({
                         {ev.model}
                       </span>
                     </td>
-                    <td className="max-w-md truncate px-3 py-2.5 text-slate-200">
-                      {ev.prompt_preview || <span className="text-slate-500">(sin texto)</span>}
+                    <td className="max-w-md px-3 py-2.5 text-slate-200">
+                      <div className="truncate">
+                        {ev.prompt_preview || <span className="text-slate-500">(sin texto)</span>}
+                      </div>
+                      {alerts.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {alerts.slice(0, 2).map((alert) => (
+                            <span
+                              key={alert.code}
+                              title={alert.suggestion}
+                              className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                                alert.severity === 'danger'
+                                  ? 'bg-rose-500/15 text-rose-300'
+                                  : 'bg-amber-500/15 text-amber-300'
+                              }`}
+                            >
+                              {alert.label}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono text-slate-300">
                       {formatCompactTokens(ev.input_tokens)}{' '}
@@ -177,6 +229,7 @@ export function PromptsTable({
                 .filter((item): item is SessionSummary => !isTurn(item))
                 .map((session) => {
                   const severity = getCostSeverity(session.total_cost_usd);
+                  const sessionAlerts = analyzeSessionEfficiency(session);
                   return (
                     <tr key={session.conversation_id} className="hover:bg-slate-800/30">
                       <td className="whitespace-nowrap py-2.5 pr-3 font-mono text-[11px] text-slate-400">
@@ -185,8 +238,25 @@ export function PromptsTable({
                       <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[11px] text-slate-300">
                         {session.conversation_id.slice(0, 12)}…
                       </td>
-                      <td className="max-w-md truncate px-3 py-2.5 text-slate-200">
-                        {session.first_prompt_preview || '(sin texto)'}
+                      <td className="max-w-md px-3 py-2.5 text-slate-200">
+                        <div className="truncate">{session.first_prompt_preview || '(sin texto)'}</div>
+                        {sessionAlerts.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {sessionAlerts.map((alert) => (
+                              <span
+                                key={alert.code}
+                                title={alert.suggestion}
+                                className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                                  alert.severity === 'danger'
+                                    ? 'bg-rose-500/15 text-rose-300'
+                                    : 'bg-amber-500/15 text-amber-300'
+                                }`}
+                              >
+                                {alert.label}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono text-slate-200">
                         {session.turn_count}

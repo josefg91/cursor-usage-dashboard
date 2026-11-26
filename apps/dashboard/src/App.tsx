@@ -142,6 +142,8 @@ export function App() {
             </section>
 
             <PromptsTable
+              range={range}
+              selectedModel={selectedModel}
               view={view}
               onViewChange={handleViewChange}
               search={search}

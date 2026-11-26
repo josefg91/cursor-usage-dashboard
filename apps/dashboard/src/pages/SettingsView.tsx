@@ -1,6 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw, UploadCloud } from 'lucide-react';
+import { FileSpreadsheet, HardDrive, Lock, RefreshCw, Trash2, UploadCloud } from 'lucide-react';
+import type { ChangeEvent } from 'react';
 import { apiClient } from '../api/client';
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
 
 export function SettingsView() {
   const queryClient = useQueryClient();
@@ -8,6 +15,11 @@ export function SettingsView() {
   const { data: pricing, isLoading } = useQuery({
     queryKey: ['pricing'],
     queryFn: apiClient.getPricing,
+  });
+
+  const { data: storage } = useQuery({
+    queryKey: ['storage-stats'],
+    queryFn: apiClient.getStorageStats,
   });
 
   const refreshMutation = useMutation({
@@ -24,6 +36,28 @@ export function SettingsView() {
       void queryClient.invalidateQueries();
     },
   });
+
+  const importCsvMutation = useMutation({
+    mutationFn: apiClient.importCsv,
+    onSuccess: () => {
+      void queryClient.invalidateQueries();
+    },
+  });
+
+  const purgeMutation = useMutation({
+    mutationFn: () => apiClient.purgePayloads(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['storage-stats'] });
+    },
+  });
+
+  const handleCsvFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    importCsvMutation.mutate(text);
+    e.target.value = '';
+  };
 
   return (
     <div className="space-y-6">
@@ -77,6 +111,104 @@ export function SettingsView() {
             {syncBufferMutation.data.inserted} nuevos insertados en SQLite.
           </p>
         )}
+      </section>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <section className="rounded-xl border border-slate-800 bg-[#111827] p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="flex items-center gap-2 text-sm font-medium text-slate-100">
+                <FileSpreadsheet className="h-4 w-4 text-emerald-400" />
+                Importar CSV de Cursor Usage (Conciliación)
+              </h3>
+              <p className="mt-1 text-xs text-slate-400">
+                Sube el CSV descargado de <code className="text-slate-300">cursor.com/dashboard</code>{' '}
+                &gt; Usage para conciliar costes reales y añadir subagentes.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-3.5 py-2 text-xs font-medium text-emerald-300 transition hover:bg-emerald-500/20">
+              <FileSpreadsheet className="h-3.5 w-3.5" />
+              <span>
+                {importCsvMutation.isPending ? 'Importando CSV...' : 'Seleccionar archivo .csv'}
+              </span>
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(e) => void handleCsvFileChange(e)}
+                disabled={importCsvMutation.isPending}
+                className="hidden"
+              />
+            </label>
+          </div>
+
+          {importCsvMutation.data && (
+            <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 font-mono text-xs text-emerald-200">
+              Filas: {importCsvMutation.data.total_rows} · Conciliados:{' '}
+              {importCsvMutation.data.reconciled} · Insertados: {importCsvMutation.data.inserted} ·
+              Omitidos: {importCsvMutation.data.skipped}
+            </div>
+          )}
+          {importCsvMutation.isError && (
+            <p className="mt-3 text-xs text-rose-400">
+              Error al importar el CSV. Comprueba que el formato sea válido.
+            </p>
+          )}
+        </section>
+
+        <section className="rounded-xl border border-slate-800 bg-[#111827] p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="flex items-center gap-2 text-sm font-medium text-slate-100">
+                <HardDrive className="h-4 w-4 text-blue-400" />
+                Retención de payloads y SQLite
+              </h3>
+              <p className="mt-1 text-xs text-slate-400">
+                Purga textos comprimidos con más de {storage?.retention_days ?? 30} días manteniendo
+                intactas las métricas de coste.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="font-mono text-xs text-slate-300">
+              {storage
+                ? `${storage.events_count} eventos · ${storage.payloads_count} payloads · ${formatBytes(storage.db_size_bytes)}`
+                : 'Cargando estadísticas...'}
+            </div>
+            <button
+              type="button"
+              disabled={purgeMutation.isPending}
+              onClick={() => purgeMutation.mutate()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/35 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-300 hover:bg-rose-500/20 disabled:opacity-50"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              {purgeMutation.isPending
+                ? 'Purgando...'
+                : `Purgar > ${storage?.retention_days ?? 30}d`}
+            </button>
+          </div>
+
+          {purgeMutation.data && (
+            <p className="mt-3 text-xs text-slate-300">
+              Purgados {purgeMutation.data.purged_count} payloads anteriores a{' '}
+              {purgeMutation.data.cutoff_iso.slice(0, 10)}.
+            </p>
+          )}
+        </section>
+      </div>
+
+      <section className="rounded-xl border border-dashed border-slate-800 bg-[#0B0F19] p-4">
+        <div className="flex items-center gap-2 text-xs text-slate-400">
+          <Lock className="h-3.5 w-3.5 text-slate-500" />
+          <span>
+            <strong className="text-slate-300">Cursor Enterprise Admin API (RF-11):</strong>{' '}
+            pendiente / desactivada por defecto (requiere <code>CURSOR_ADMIN_KEY</code> corporativa
+            de IT).
+          </span>
+        </div>
       </section>
 
       <section className="rounded-xl border border-slate-800 bg-[#111827] p-5">

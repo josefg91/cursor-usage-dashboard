@@ -1,4 +1,5 @@
 import type {
+  CsvImportResult,
   HealthResponse,
   ModelBreakdownItem,
   ModelPricing,
@@ -6,7 +7,9 @@ import type {
   PromptEvent,
   PromptEventDetail,
   PromptsViewMode,
+  PurgePayloadsResult,
   SessionSummary,
+  StorageMaintenanceStats,
   SummaryStats,
   TimeRange,
   TimeseriesBucket,
@@ -64,4 +67,26 @@ export const apiClient = {
     fetchJson<{ processed: number; inserted: number }>('/api/events/sync-buffer', {
       method: 'POST',
     }),
+  importCsv: (csvText: string) =>
+    fetchJson<CsvImportResult>('/api/import/csv', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ csvText }),
+    }),
+  getStorageStats: () => fetchJson<StorageMaintenanceStats>('/api/maintenance/storage'),
+  purgePayloads: (retentionDays?: number) =>
+    fetchJson<PurgePayloadsResult>('/api/maintenance/purge-payloads', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(retentionDays ? { retentionDays } : {}),
+    }),
+  getExportUrl: (
+    format: 'csv' | 'json',
+    filters: { range: TimeRange; model?: string; search?: string },
+  ) => {
+    const params = new URLSearchParams({ format, range: filters.range });
+    if (filters.model && filters.model !== 'all') params.set('model', filters.model);
+    if (filters.search) params.set('search', filters.search);
+    return `/api/export?${params.toString()}`;
+  },
 };

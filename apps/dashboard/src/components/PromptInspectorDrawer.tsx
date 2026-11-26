@@ -1,5 +1,6 @@
+import { analyzeTurnEfficiency } from '@cursor-dashboard/shared';
 import { useQuery } from '@tanstack/react-query';
-import { Check, Copy, X } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, Copy, X } from 'lucide-react';
 import { useState } from 'react';
 import { apiClient } from '../api/client';
 import {
@@ -36,6 +37,7 @@ export function PromptInspectorDrawer({ eventId, onClose }: PromptInspectorDrawe
 
   const pct = (n: number) => (totalTokens > 0 ? Math.max(2, (n / totalTokens) * 100) : 0);
   const severity = data ? getCostSeverity(data.cost_usd) : null;
+  const efficiencyAlerts = data ? analyzeTurnEfficiency(data) : [];
 
   const handleCopyPrompt = async () => {
     if (!data?.prompt_text) return;
@@ -158,6 +160,41 @@ export function PromptInspectorDrawer({ eventId, onClose }: PromptInspectorDrawe
                     Salida: {formatNumber(data.output_tokens)}
                   </div>
                 </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-800 bg-[#111827] p-4">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium text-slate-200">Diagnóstico de eficiencia</span>
+                  {efficiencyAlerts.length === 0 ? (
+                    <span className="inline-flex items-center gap-1 text-emerald-400">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      Eficiente
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-amber-400">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      {efficiencyAlerts.length} sugerencia{efficiencyAlerts.length > 1 ? 's' : ''}
+                    </span>
+                  )}
+                </div>
+
+                {efficiencyAlerts.length > 0 && (
+                  <ul className="mt-3 space-y-2">
+                    {efficiencyAlerts.map((alert) => (
+                      <li
+                        key={alert.code}
+                        className={`rounded-lg border p-2.5 text-xs ${
+                          alert.severity === 'danger'
+                            ? 'border-rose-500/30 bg-rose-500/10 text-rose-200'
+                            : 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                        }`}
+                      >
+                        <p className="font-semibold">{alert.label}</p>
+                        <p className="mt-0.5 text-[11px] opacity-90">{alert.suggestion}</p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
 
               <div>

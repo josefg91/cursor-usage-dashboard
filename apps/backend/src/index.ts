@@ -9,11 +9,19 @@ async function bootstrap() {
 
   const { app, repo, pricingService } = await buildApp({
     db,
+    dbPath: config.dbPath,
+    payloadRetentionDays: config.payloadRetentionDays,
     overridesPath: config.overridesPath,
     pricingCacheTtlHours: config.pricingCacheTtlHours,
     bufferPath: config.bufferPath,
     logger: true,
   });
+
+  // Política de retención: purga automática de payloads comprimidos > N días manteniendo métricas intactas
+  const purgeRes = repo.purgeOldPayloads(config.payloadRetentionDays);
+  if (purgeRes.purged_count > 0) {
+    app.log.info(purgeRes, 'Payloads antiguos purgados según política de retención');
+  }
 
   // Refrescar catálogo de precios en segundo plano (con caché 24h en SQLite)
   void pricingService

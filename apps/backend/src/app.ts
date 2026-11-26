@@ -8,9 +8,12 @@ import { eventsRoutes } from './routes/events.js';
 import { statsRoutes } from './routes/stats.js';
 import { promptsRoutes } from './routes/prompts.js';
 import { pricingRoutes } from './routes/pricing.js';
+import { maintenanceRoutes } from './routes/maintenance.js';
 
 export interface BuildAppOptions {
   db: DatabaseSync;
+  dbPath?: string;
+  payloadRetentionDays?: number;
   overridesPath: string;
   pricingCacheTtlHours: number;
   bufferPath: string;
@@ -42,6 +45,8 @@ export async function buildApp(options: BuildAppOptions): Promise<{
     repo,
     pricingService,
     bufferPath: options.bufferPath,
+    dbPath: options.dbPath ?? ':memory:',
+    payloadRetentionDays: options.payloadRetentionDays ?? 30,
   };
 
   await app.register(async (instance) => {
@@ -50,6 +55,7 @@ export async function buildApp(options: BuildAppOptions): Promise<{
     await statsRoutes(instance, deps);
     await promptsRoutes(instance, deps);
     await pricingRoutes(instance, deps);
+    await maintenanceRoutes(instance, deps);
   });
 
   app.addHook('onClose', async () => {

@@ -1,16 +1,20 @@
+import fs from 'node:fs';
 import zlib from 'node:zlib';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
-import type {
-  ModelBreakdownItem,
-  ModelPricing,
-  PaginatedResponse,
-  PromptEvent,
-  PromptEventDetail,
-  PromptsViewMode,
-  SessionSummary,
-  SummaryStats,
-  TimeRange,
-  TimeseriesBucket,
+import {
+  normalizeModelKey,
+  type ModelBreakdownItem,
+  type ModelPricing,
+  type PaginatedResponse,
+  type PromptEvent,
+  type PromptEventDetail,
+  type PromptsViewMode,
+  type PurgePayloadsResult,
+  type SessionSummary,
+  type StorageMaintenanceStats,
+  type SummaryStats,
+  type TimeRange,
+  type TimeseriesBucket,
 } from '@cursor-dashboard/shared';
 
 export interface QueryFilters {
@@ -468,5 +472,122 @@ export class TelemetryRepository {
       .prepare('SELECT MAX(updated_at) AS latest FROM model_pricing WHERE is_override = 0')
       .get() as { latest: string | null } | undefined;
     return row?.latest ?? null;
+  }
+
+  /**
+   * Busca un evento de cursor_hook en ventana temporal cercana para conciliar su coste real desde CSV.
+   */
+  findReconciliationCandidate(
+    isoTimestamp: string,
+    normalizedModel: string,
+    windowMs: number,
+  ): string | null {
+    const targetMs = Date.parse(isoTimestamp);
+    if (!Number.isFinite(targetMs)) return null;
+    const minIso = new Date(targetMs - windowMs).toISOString();
+    const maxIso = new Date(targetMs + windowMs).toISOString();
+
+    const rows = this.db
+      .prepare(
+        `
+        SELECT id, model, timestamp
+        FROM prompt_events
+        WHERE source = 'cursor_hook'
+          AND cost_source = 'calculated'
+          AND timestamp BETWEEN ? AND ?
+        ORDER BY timestamp ASC
+      `,
+      )
+      .all(minIso, maxIso) as Array<{ id: string; model: string; timestamp: string }>;
+
+    let bestId: string | null = null;
+    let bestDiff = Infinity;
+    for (const row of rows) {
+      if (normalizeModelKey(row.model) !== normalizedModel) continue;
+      const diff = Math.abs(Date.parse(row.timestamp) - targetMs);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestId = row.id;
+      }
+    }
+    return bestId;
+  }
+
+  reconcileEventCost(eventId: string, costUsd: number): void {
+    this.db
+      .prepare("UPDATE prompt_events SET cost_usd = ?, cost_source = 'csv_reconciled' WHERE id = ?")
+      .run(costUsd, eventId);
+  }
+
+  exportEvents(filters: QueryFilters): PromptEvent[] {
+    const { clause, params } = buildWhereClause(filters);
+    const rows = this.db
+      .prepare(`SELECT * FROM prompt_events ${clause} ORDER BY timestamp DESC`)
+      .all(...params) as Array<Record<string, unknown>>;
+
+    return rows.map((r) => ({
+      id: String(r.id),
+      conversation_id: String(r.conversation_id),
+      timestamp: String(r.timestamp),
+      model: String(r.model),
+      prompt_preview: String(r.prompt_preview ?? ''),
+      input_tokens: Number(r.input_tokens ?? 0),
+      uncached_input_tokens: Number(r.uncached_input_tokens ?? 0),
+      cache_read_tokens: Number(r.cache_read_tokens ?? 0),
+      cache_write_tokens: Number(r.cache_write_tokens ?? 0),
+      output_tokens: Number(r.output_tokens ?? 0),
+      reasoning_tokens: Number(r.reasoning_tokens ?? 0),
+      cost_usd: Number(r.cost_usd ?? 0),
+      cost_source: String(r.cost_source) as PromptEvent['cost_source'],
+      duration_ms:
+        r.duration_ms === null || r.duration_ms === undefined ? null : Number(r.duration_ms),
+      source: String(r.source) as PromptEvent['source'],
+    }));
+  }
+
+  purgeOldPayloads(retentionDays: number): PurgePayloadsResult {
+    const safeDays = Math.max(1, Math.floor(retentionDays));
+    const cutoffIso = new Date(Date.now() - safeDays * 24 * 60 * 60 * 1000).toISOString();
+    const res = this.db
+      .prepare(
+        `
+        DELETE FROM prompt_payloads
+        WHERE event_id IN (
+          SELECT id FROM prompt_events WHERE timestamp < ?
+        )
+      `,
+      )
+      .run(cutoffIso);
+
+    return {
+      purged_count: Number(res.changes ?? 0),
+      retention_days: safeDays,
+      cutoff_iso: cutoffIso,
+    };
+  }
+
+  getStorageStats(dbPath: string, retentionDays: number): StorageMaintenanceStats {
+    const eventsRow = this.db.prepare('SELECT COUNT(*) AS count FROM prompt_events').get() as
+      | { count: number }
+      | undefined;
+    const payloadsRow = this.db.prepare('SELECT COUNT(*) AS count FROM prompt_payloads').get() as
+      | { count: number }
+      | undefined;
+
+    let dbSizeBytes = 0;
+    if (dbPath !== ':memory:' && fs.existsSync(dbPath)) {
+      try {
+        dbSizeBytes = fs.statSync(dbPath).size;
+      } catch {
+        dbSizeBytes = 0;
+      }
+    }
+
+    return {
+      events_count: Number(eventsRow?.count ?? 0),
+      payloads_count: Number(payloadsRow?.count ?? 0),
+      db_size_bytes: dbSizeBytes,
+      retention_days: retentionDays,
+    };
   }
 }

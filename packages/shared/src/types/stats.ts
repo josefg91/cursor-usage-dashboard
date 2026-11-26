@@ -57,3 +57,23 @@ export interface HealthResponse {
   db_events_count: number;
   pricing_models_count: number;
 }
+
+export interface CsvImportResult {
+  total_rows: number;
+  reconciled: number;
+  inserted: number;
+  skipped: number;
+}
+
+export interface StorageMaintenanceStats {
+  events_count: number;
+  payloads_count: number;
+  db_size_bytes: number;
+  retention_days: number;
+}
+
+export interface PurgePayloadsResult {
+  purged_count: number;
+  retention_days: number;
+  cutoff_iso: string;
+}

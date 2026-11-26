@@ -177,25 +177,25 @@ Distribución vertical de la pantalla principal:
 ## 10. 📌 Priorización y Fases
 
 ### Fase 1 - Prueba de Concepto (Gasto de hoy en minutos)
-- [ ] Crear script ligero de Cursor Hooks (`~/.cursor/hooks.json` + `track-spend.mjs`) para `beforeSubmitPrompt` y `afterAgentResponse`.
-- [ ] Calcular coste en USD evitando doble conteo de caché y guardar en log local `.jsonl`.
-- [ ] Comando CLI (`--today`) que muestre el gasto acumulado de hoy y tabla por modelo.
+- [x] Crear script ligero de Cursor Hooks (`~/.cursor/hooks.json` + `track-spend.mjs`) para `beforeSubmitPrompt` y `afterAgentResponse`.
+- [x] Calcular coste en USD evitando doble conteo de caché y guardar en log local `.jsonl`.
+- [x] Comando CLI (`--today` y `--prompts`) que muestre el gasto acumulado de hoy, tabla por modelo y detalle de prompts.
 
 ### Fase 2 - Backend, Base de Datos y Motor de Precios (MVP Core)
-- [ ] Inicializar monorepo TypeScript (`packages/shared`, `apps/backend`, `apps/dashboard`, `apps/hooks`).
-- [ ] Implementar fórmula de precios con tests unitarios en `packages/shared` y servicio de tarifas (OpenRouter + LiteLLM + overrides).
-- [ ] Crear base de datos SQLite (`WAL` + `gzip`) y endpoints REST (`POST /api/events`, `GET /api/health`, `GET /api/stats/summary`, `GET /api/stats/by-model`, `GET /api/stats/timeseries`, `GET /api/prompts`, `GET /api/prompts/:id`).
-- [ ] Conectar los Cursor Hooks al backend local con fallback automático a buffer `.jsonl`.
+- [x] Inicializar monorepo TypeScript (`packages/shared`, `apps/backend`, `apps/dashboard`, `apps/hooks`).
+- [x] Implementar fórmula de precios con tests unitarios en `packages/shared` y servicio de tarifas (OpenRouter + LiteLLM + overrides).
+- [x] Crear base de datos SQLite (`WAL` + `gzip`) y endpoints REST (`POST /api/events`, `GET /api/health`, `GET /api/stats/summary`, `GET /api/stats/by-model`, `GET /api/stats/timeseries`, `GET /api/prompts`, `GET /api/prompts/:id`).
+- [x] Conectar los Cursor Hooks al backend local con fallback automático a buffer `.jsonl`.
 
 ### Fase 3 - Dashboard Visual (MVP UI)
-- [ ] Construir interfaz oscura en React + Tailwind + TanStack Query + Recharts.
-- [ ] Implementar `FilterBar`, `KpiCards`, `CostByModelChart`, `ContextVsCostScatter`, `PromptsTable` (toggle turnos/sesiones + semáforo de coste) y `PromptInspectorDrawer`.
-- [ ] Añadir script `seed` para probar el dashboard con datos simulados y documentar instalación paso a paso en `README.md`.
+- [x] Construir interfaz oscura en React + Tailwind + TanStack Query + Recharts.
+- [x] Implementar `FilterBar`, `KpiCards`, `CostByModelChart`, `ContextVsCostScatter`, `PromptsTable` (toggle turnos/sesiones + semáforo de coste) y `PromptInspectorDrawer`.
+- [x] Añadir script `seed` para probar el dashboard con datos simulados y documentar instalación paso a paso en `README.md`.
 
 ### Fase 4 - Mejoras y Conciliación Enterprise (Post-MVP)
-- [ ] Importador de CSV de `cursor.com/dashboard` > *Usage* para conciliar costes reales y subagentes.
-- [ ] Conector opcional a Cursor Enterprise Admin API (si se obtiene clave).
-- [ ] Indicadores automáticos de "malos hábitos" de prompting y política de retención de payloads.
+- [x] Importador de CSV de `cursor.com/dashboard` > *Usage* para conciliar costes reales y subagentes (`RF-10`).
+- [ ] Conector opcional a Cursor Enterprise Admin API (`RF-11` — *pendiente: requiere Admin API Key corporativa de IT*).
+- [x] Indicadores automáticos de "malos hábitos" de prompting (`RF-12`), política de retención de payloads (`RF-13`) y exportación de informes CSV/JSON (`RF-14`).
 
 ---
 

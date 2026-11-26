@@ -74,6 +74,13 @@ node apps/hooks/src/install-hooks.mjs --uninstall
 | `GET` | `/api/prompts` | Listado paginado (`?view=turns\|sessions&search=...&page=1&limit=25`) |
 | `GET` | `/api/prompts/:id` | Detalle completo del turno descomprimiendo payloads `gzip` |
 | `GET` / `POST` | `/api/pricing` · `/api/pricing/refresh` | Consulta y refresco manual del catálogo de tarifas |
+| `POST` | `/api/import/csv` | Importa y concilia costes reales desde CSV de `cursor.com/dashboard` > *Usage* |
+| `GET` / `POST` | `/api/maintenance/storage` · `/api/maintenance/purge-payloads` | Estadísticas SQLite y purga de payloads > 30 días manteniendo métricas |
+| `GET` | `/api/export` | Exportación de datos filtrados (`?format=csv\|json&range=...&model=...&search=...`) |
+
+## Pendiente (Fase 4)
+
+- [ ] **Cursor Enterprise Admin API (`RF-11`):** sincronización automática vía `POST https://api.cursor.com/teams/filtered-usage-events` (pendiente de disponer de una `CURSOR_ADMIN_KEY` corporativa de IT).
 
 ## Tarifas personalizadas (`pricing-overrides.json`)
 

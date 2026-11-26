@@ -190,4 +190,103 @@ describe('Backend API + SQLite + PricingService', () => {
       await app.close();
     }
   });
+
+  it('importa y concilia CSV de Cursor Usage, exporta CSV/JSON y purga payloads antiguos', async () => {
+    const tmpDir = createTempDir();
+    const db = initDatabase(':memory:');
+    const { app, repo } = await buildApp({
+      db,
+      overridesPath: path.join(tmpDir, 'pricing-overrides.json'),
+      pricingCacheTtlHours: 24,
+      bufferPath: path.join(tmpDir, 'spend-buffer.jsonl'),
+      payloadRetentionDays: 30,
+    });
+
+    try {
+      const recentIso = new Date().toISOString();
+      const oldIso = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
+
+      // Insertar un evento reciente (para conciliar con CSV) y otro de hace 45 días (para purga)
+      await app.inject({
+        method: 'POST',
+        url: '/api/events',
+        payload: {
+          id: 'hook-recent',
+          conversation_id: 'conv-r',
+          timestamp: recentIso,
+          model: 'claude-3.7-sonnet-thinking',
+          prompt_text: 'Prompt reciente',
+          input_tokens: 20_000,
+          output_tokens: 1_000,
+        },
+      });
+      await app.inject({
+        method: 'POST',
+        url: '/api/events',
+        payload: {
+          id: 'hook-old',
+          conversation_id: 'conv-old',
+          timestamp: oldIso,
+          model: 'gpt-4o',
+          prompt_text: 'Prompt antiguo de hace 45 días',
+          response_text: 'Respuesta antigua',
+          input_tokens: 5_000,
+          output_tokens: 500,
+        },
+      });
+
+      // 1. Importar CSV: fila 1 concilia hook-recent, fila 2 inserta subagente nuevo
+      const csvText = [
+        'Date,Kind,Model,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Cost',
+        `${recentIso},Included,claude-3.7-sonnet,15000,5000,10000,1000,$0.0987`,
+        `${new Date(Date.now() - 3600_000).toISOString()},Subagent,gemini-2.5-pro,8000,8000,2000,400,$0.0150`,
+      ].join('\n');
+
+      const importRes = await app.inject({
+        method: 'POST',
+        url: '/api/import/csv',
+        payload: { csvText },
+      });
+      expect(importRes.statusCode).toBe(200);
+      expect(importRes.json()).toEqual({
+        total_rows: 2,
+        reconciled: 1,
+        inserted: 1,
+        skipped: 0,
+      });
+
+      const reconciledEvent = repo.getPromptDetail('hook-recent');
+      expect(reconciledEvent?.cost_source).toBe('csv_reconciled');
+      expect(reconciledEvent?.cost_usd).toBeCloseTo(0.0987, 4);
+
+      // 2. Exportación CSV y JSON
+      const csvExport = await app.inject({ method: 'GET', url: '/api/export?format=csv&range=all' });
+      expect(csvExport.statusCode).toBe(200);
+      expect(csvExport.headers['content-type']).toContain('text/csv');
+      expect(csvExport.body).toContain('hook-recent');
+
+      const jsonExport = await app.inject({
+        method: 'GET',
+        url: '/api/export?format=json&range=all',
+      });
+      expect(jsonExport.statusCode).toBe(200);
+      expect(jsonExport.json().count).toBe(3);
+
+      // 3. Purga de payloads > 30 días (mantiene métricas en prompt_events, borra payload gzip)
+      const purgeRes = await app.inject({
+        method: 'POST',
+        url: '/api/maintenance/purge-payloads',
+        payload: { retentionDays: 30 },
+      });
+      expect(purgeRes.statusCode).toBe(200);
+      expect(purgeRes.json().purged_count).toBe(1);
+
+      const oldAfterPurge = repo.getPromptDetail('hook-old');
+      expect(oldAfterPurge).not.toBeNull();
+      expect(oldAfterPurge?.prompt_text).toBeNull();
+      expect(oldAfterPurge?.input_tokens).toBe(5_000);
+    } finally {
+      await app.close();
+    }
+  });
 });
