@@ -16,7 +16,8 @@
     "install-hooks": "pnpm --filter @cursor-dashboard/hooks install-hooks",
     "today": "pnpm --filter @cursor-dashboard/hooks today",
     "prompts": "pnpm --filter @cursor-dashboard/hooks prompts",
-    "seed": "pnpm --filter @cursor-dashboard/backend seed"
+    "seed": "pnpm --filter @cursor-dashboard/backend seed",
+    "seed:clear": "pnpm --filter @cursor-dashboard/backend seed:clear"
   },
   "devDependencies": {
     "typescript": "^5.8.2",
