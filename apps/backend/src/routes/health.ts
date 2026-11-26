@@ -1,10 +1,21 @@
 import type { FastifyInstance } from 'fastify';
+import type { HealthResponse } from '@cursor-dashboard/shared';
+import type { TelemetryRepository } from '../db/repository.js';
+import type { PricingService } from '../services/pricingService.js';
 
-export async function healthRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/health', async () => {
+export interface RouteDeps {
+  repo: TelemetryRepository;
+  pricingService: PricingService;
+  bufferPath: string;
+}
+
+export async function healthRoutes(app: FastifyInstance, deps: RouteDeps): Promise<void> {
+  app.get('/api/health', async (): Promise<HealthResponse> => {
     return {
       status: 'ok',
       timestamp: new Date().toISOString(),
+      db_events_count: deps.repo.getEventsCount(),
+      pricing_models_count: deps.pricingService.getCatalogCount(),
     };
   });
 }

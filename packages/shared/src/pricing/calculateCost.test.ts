@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { calculateTurnCost } from './calculateCost.js';
+import { normalizeModelKey, resolveModelRates } from './modelCatalog.js';
 
 describe('calculateTurnCost', () => {
   const claudeRates = {
@@ -42,5 +43,37 @@ describe('calculateTurnCost', () => {
 
     expect(result.uncached_input_tokens).toBe(0);
     expect(result.cost_usd).toBeCloseTo(0.0174, 6);
+  });
+});
+
+describe('modelCatalog', () => {
+  it('normaliza sufijos encadenados de Cursor como -thinking-high', () => {
+    expect(normalizeModelKey('claude-haiku-5-5-thinking-high')).toBe('claude-haiku-5-5');
+    expect(normalizeModelKey('anthropic/claude-3.7-sonnet-20250219')).toBe('claude-3.7-sonnet');
+  });
+
+  it('prioriza overrides locales sobre catálogo remoto y defaults', () => {
+    const res = resolveModelRates(
+      'claude-3.7-sonnet',
+      {
+        'claude-3.7-sonnet': {
+          input_per_1m: 3.0,
+          cache_read_per_1m: 0.3,
+          cache_write_per_1m: 3.75,
+          output_per_1m: 15.0,
+        },
+      },
+      {
+        'claude-3.7-sonnet': {
+          input_per_1m: 2.0,
+          cache_read_per_1m: 0.2,
+          cache_write_per_1m: 2.5,
+          output_per_1m: 10.0,
+        },
+      },
+    );
+
+    expect(res.matched).toBe(true);
+    expect(res.rates.input_per_1m).toBe(2.0);
   });
 });

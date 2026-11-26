@@ -6,7 +6,7 @@ import { installHooks, mergeHooksConfig } from '../install-hooks.mjs';
 import { parseHookPayload } from '../parser.mjs';
 import { calculateTurnCost, normalizeModelKey, resolveModelRates } from '../pricing.mjs';
 import { getDefaultStoragePaths, readBufferEvents, summarizeEventsByDate } from '../storage.mjs';
-import { formatSummaryTable, handleHookEvent } from '../track-spend.mjs';
+import { dispatchHookEvent, formatSummaryTable, handleHookEvent } from '../track-spend.mjs';
 
 const tempDirs = [];
 
@@ -153,6 +153,37 @@ describe('track-spend.mjs y storage.mjs', () => {
     const table = formatSummaryTable(summary);
     expect(table).toContain('claude-3.7-sonnet');
     expect(table).toContain('$0.0345');
+  });
+
+  it('dispatchHookEvent envía al backend si está disponible y hace fallback a .jsonl si falla', async () => {
+    const tmpDir = createTempDir();
+    const storagePaths = getDefaultStoragePaths(tmpDir);
+    const payload = JSON.stringify({
+      conversation_id: 'conv-dispatch',
+      model: 'gpt-4o',
+      input_tokens: 1_000,
+      output_tokens: 500,
+    });
+
+    // Caso 1: backend responde 201 -> no escribe en buffer
+    const okRes = await dispatchHookEvent(payload, {
+      eventHint: 'afterAgentResponse',
+      storagePaths,
+      fetchFn: async () => new Response('{}', { status: 201 }),
+    });
+    expect(okRes.delivered).toBe('backend');
+    expect(readBufferEvents(storagePaths.bufferPath)).toHaveLength(0);
+
+    // Caso 2: backend caído -> fallback automático a .jsonl
+    const failRes = await dispatchHookEvent(payload, {
+      eventHint: 'afterAgentResponse',
+      storagePaths,
+      fetchFn: async () => {
+        throw new Error('ECONNREFUSED');
+      },
+    });
+    expect(failRes.delivered).toBe('buffer');
+    expect(readBufferEvents(storagePaths.bufferPath)).toHaveLength(1);
   });
 });
 

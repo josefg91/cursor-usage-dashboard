@@ -1,32 +1,34 @@
-import Fastify from 'fastify';
-import cors from '@fastify/cors';
 import { loadConfig } from './config.js';
 import { initDatabase } from './db/index.js';
-import { healthRoutes } from './routes/health.js';
-import { eventsRoutes } from './routes/events.js';
-import { statsRoutes } from './routes/stats.js';
-import { promptsRoutes } from './routes/prompts.js';
+import { buildApp } from './app.js';
+import { ingestBufferFile } from './services/bufferIngestService.js';
 
 async function bootstrap() {
   const config = loadConfig();
   const db = initDatabase(config.dbPath);
 
-  const app = Fastify({
+  const { app, repo, pricingService } = await buildApp({
+    db,
+    overridesPath: config.overridesPath,
+    pricingCacheTtlHours: config.pricingCacheTtlHours,
+    bufferPath: config.bufferPath,
     logger: true,
   });
 
-  await app.register(cors, {
-    origin: [/^http:\/\/localhost:\d+$/, /^http:\/\/127\.0\.0\.1:\d+$/],
-  });
-
-  await app.register(healthRoutes);
-  await app.register(eventsRoutes);
-  await app.register(statsRoutes);
-  await app.register(promptsRoutes);
-
-  app.addHook('onClose', async () => {
-    db.close();
-  });
+  // Refrescar catálogo de precios en segundo plano (con caché 24h en SQLite)
+  void pricingService
+    .ensureFreshCatalog()
+    .then((res) => {
+      app.log.info(res, 'Catálogo de precios listo');
+      // Ingerir eventos acumulados en ~/.cursor/spend-buffer.jsonl mientras el backend estuvo apagado
+      const ingested = ingestBufferFile(config.bufferPath, repo, pricingService);
+      if (ingested.inserted > 0) {
+        app.log.info(ingested, 'Eventos ingeridos desde spend-buffer.jsonl');
+      }
+    })
+    .catch((err) => {
+      app.log.warn({ err }, 'No se pudo refrescar el catálogo remoto; usando tarifas locales');
+    });
 
   await app.listen({ port: config.port, host: config.host });
 }

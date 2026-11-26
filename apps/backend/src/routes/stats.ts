@@ -1,18 +1,42 @@
 import type { FastifyInstance } from 'fastify';
+import type { TimeRange } from '@cursor-dashboard/shared';
+import type { RouteDeps } from './health.js';
 
-export async function statsRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/api/stats/summary', async (_request, reply) => {
-    // TODO (Fase 2): Consultar agregados de KPIs desde SQLite
-    return reply.status(501).send({ error: 'Not Implemented' });
+interface StatsQuerystring {
+  range?: TimeRange;
+  model?: string;
+  search?: string;
+}
+
+function parseRange(range?: string): TimeRange {
+  if (range === 'today' || range === '7d' || range === '30d' || range === 'all') {
+    return range;
+  }
+  return 'today';
+}
+
+export async function statsRoutes(app: FastifyInstance, deps: RouteDeps): Promise<void> {
+  app.get<{ Querystring: StatsQuerystring }>('/api/stats/summary', async (request) => {
+    return deps.repo.getSummaryStats({
+      range: parseRange(request.query.range),
+      model: request.query.model,
+      search: request.query.search,
+    });
   });
 
-  app.get('/api/stats/by-model', async (_request, reply) => {
-    // TODO (Fase 2): Consultar desglose de gasto por modelo
-    return reply.status(501).send({ error: 'Not Implemented' });
+  app.get<{ Querystring: StatsQuerystring }>('/api/stats/by-model', async (request) => {
+    return deps.repo.getBreakdownByModel({
+      range: parseRange(request.query.range),
+      model: request.query.model,
+      search: request.query.search,
+    });
   });
 
-  app.get('/api/stats/timeseries', async (_request, reply) => {
-    // TODO (Fase 2): Consultar evolución temporal apilada por modelo
-    return reply.status(501).send({ error: 'Not Implemented' });
+  app.get<{ Querystring: StatsQuerystring }>('/api/stats/timeseries', async (request) => {
+    return deps.repo.getTimeseries({
+      range: parseRange(request.query.range),
+      model: request.query.model,
+      search: request.query.search,
+    });
   });
 }

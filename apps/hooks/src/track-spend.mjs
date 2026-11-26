@@ -29,6 +29,44 @@ import {
 } from './storage.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DEFAULT_BACKEND_URL = 'http://127.0.0.1:3001';
+const BACKEND_TIMEOUT_MS = 450;
+
+export async function postEventToBackend(
+  record,
+  {
+    backendUrl = process.env.CURSOR_DASHBOARD_API_URL || DEFAULT_BACKEND_URL,
+    timeoutMs = BACKEND_TIMEOUT_MS,
+    fetchFn = fetch,
+  } = {},
+) {
+  try {
+    const res = await fetchFn(`${backendUrl.replace(/\/$/, '')}/api/events`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(record),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function fetchTodayEventsFromBackend(
+  backendUrl = process.env.CURSOR_DASHBOARD_API_URL || DEFAULT_BACKEND_URL,
+) {
+  try {
+    const res = await fetch(`${backendUrl.replace(/\/$/, '')}/api/prompts?range=today&limit=200`, {
+      signal: AbortSignal.timeout(350),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data?.items) ? data.items : null;
+  } catch {
+    return null;
+  }
+}
 
 function parseCliArgs(argv) {
   const options = {
@@ -253,9 +291,12 @@ export function formatSummaryTable(summary, dayEvents = []) {
 }
 
 /**
- * Procesa un evento de Cursor Hook (puro + efecto en storagePaths, fácil de testear).
+ * Procesa un evento de Cursor Hook (síncrono, escribe directamente al buffer local).
  */
-export function handleHookEvent(rawStdin, { eventHint = '', storagePaths, overridePaths = [] }) {
+export function handleHookEvent(
+  rawStdin,
+  { eventHint = '', storagePaths, overridePaths = [], skipBufferWrite = false },
+) {
   const parsed = parseHookPayload(rawStdin, eventHint);
   const eventType = parsed.event_name;
 
@@ -324,11 +365,40 @@ export function handleHookEvent(rawStdin, { eventHint = '', storagePaths, overri
       raw_hook_json: parsed.raw_hook_json,
     };
 
-    appendEventToBuffer(storagePaths.bufferPath, record);
+    if (!skipBufferWrite) {
+      appendEventToBuffer(storagePaths.bufferPath, record);
+    }
     return { action: 'recorded_event', record };
   }
 
   return { action: 'ignored', event_name: eventType };
+}
+
+/**
+ * Envía el evento al backend local con timeout corto (< 500 ms) y hace fallback
+ * automático al buffer .jsonl si el backend no está activo.
+ */
+export async function dispatchHookEvent(
+  rawStdin,
+  { eventHint = '', storagePaths, overridePaths = [], backendUrl, fetchFn } = {},
+) {
+  const result = handleHookEvent(rawStdin, {
+    eventHint,
+    storagePaths,
+    overridePaths,
+    skipBufferWrite: true,
+  });
+
+  if (result.action === 'recorded_event' && result.record) {
+    const sent = await postEventToBackend(result.record, { backendUrl, fetchFn });
+    if (!sent) {
+      appendEventToBuffer(storagePaths.bufferPath, result.record);
+      return { ...result, delivered: 'buffer' };
+    }
+    return { ...result, delivered: 'backend' };
+  }
+
+  return result;
 }
 
 async function main() {
@@ -339,14 +409,29 @@ async function main() {
     if (options.today || options.date || options.prompts) {
       const targetDate = options.date || toLocalDateKey();
       const overrides = loadPricingOverrides(getDefaultOverridePaths(__dirname, os.homedir()));
-      const events = enrichEventsWithPricing(readBufferEvents(storagePaths.bufferPath), overrides);
+      const bufferEvents = readBufferEvents(storagePaths.bufferPath);
+      const backendEvents =
+        !options.date && !options.bufferDir ? await fetchTodayEventsFromBackend() : null;
+
+      // Combinar eventos del backend y del buffer sin duplicar por id
+      const mergedById = new Map();
+      for (const ev of bufferEvents) {
+        mergedById.set(ev.id || `${ev.timestamp}-${ev.conversation_id}`, ev);
+      }
+      for (const ev of backendEvents || []) {
+        mergedById.set(ev.id || `${ev.timestamp}-${ev.conversation_id}`, ev);
+      }
+
+      const events = enrichEventsWithPricing(Array.from(mergedById.values()), overrides);
       const dayEvents = events.filter((ev) => toLocalDateKey(ev.timestamp) === targetDate);
       const summary = summarizeEventsByDate(events, targetDate);
 
       if (options.json) {
         console.log(
           JSON.stringify(
-            options.prompts ? { date: targetDate, prompts: dayEvents } : { ...summary, prompts: dayEvents },
+            options.prompts
+              ? { date: targetDate, prompts: dayEvents }
+              : { ...summary, prompts: dayEvents },
             null,
             2,
           ),
@@ -364,7 +449,7 @@ async function main() {
       process.exit(0);
     }
 
-    handleHookEvent(rawStdin, {
+    await dispatchHookEvent(rawStdin, {
       eventHint: options.event,
       storagePaths,
       overridePaths: getDefaultOverridePaths(__dirname, os.homedir()),
