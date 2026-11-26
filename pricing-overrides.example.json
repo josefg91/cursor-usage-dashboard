@@ -1,0 +1,14 @@
+{
+  "claude-3.7-sonnet": {
+    "input_per_1m": 3.0,
+    "cache_read_per_1m": 0.3,
+    "cache_write_per_1m": 3.75,
+    "output_per_1m": 15.0
+  },
+  "gpt-4o": {
+    "input_per_1m": 2.5,
+    "cache_read_per_1m": 1.25,
+    "cache_write_per_1m": 2.5,
+    "output_per_1m": 10.0
+  }
+}

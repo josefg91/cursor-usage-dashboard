@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [
+      {
+        "command": "node /RUTA/ABSOLUTA/A/apps/hooks/src/track-spend.mjs --event beforeSubmitPrompt"
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": "node /RUTA/ABSOLUTA/A/apps/hooks/src/track-spend.mjs --event afterAgentResponse"
+      }
+    ],
+    "stop": [
+      {
+        "command": "node /RUTA/ABSOLUTA/A/apps/hooks/src/track-spend.mjs --event stop"
+      }
+    ]
+  }
+}

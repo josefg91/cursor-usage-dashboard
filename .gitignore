@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+
+# Local SQLite database & caches
+data/*.sqlite
+data/*.sqlite-wal
+data/*.sqlite-shm
+data/*.json
+data/*.jsonl
+pricing-overrides.json
+
+# Logs & OS files
+*.log
+.DS_Store
+Thumbs.db

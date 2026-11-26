@@ -1,0 +1,24 @@
+{
+  "name": "cursor-prompt-cost-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dashboard local de observabilidad para prompts, tokens y costes en Cursor",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @cursor-dashboard/backend --filter @cursor-dashboard/dashboard dev",
+    "dev:backend": "pnpm --filter @cursor-dashboard/backend dev",
+    "dev:dashboard": "pnpm --filter @cursor-dashboard/dashboard dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "install-hooks": "pnpm --filter @cursor-dashboard/hooks install-hooks",
+    "today": "pnpm --filter @cursor-dashboard/hooks today",
+    "seed": "pnpm --filter @cursor-dashboard/backend seed"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2",
+    "vitest": "^3.1.1"
+  }
+}

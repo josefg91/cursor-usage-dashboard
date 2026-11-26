@@ -1,0 +1,14 @@
+{
+  "name": "@cursor-dashboard/hooks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Scripts ligeros ESM para Cursor Hooks sin dependencias externas",
+  "scripts": {
+    "install-hooks": "node src/install-hooks.mjs",
+    "today": "node src/track-spend.mjs --today",
+    "typecheck": "node --check src/track-spend.mjs && node --check src/install-hooks.mjs",
+    "build": "node --check src/track-spend.mjs && node --check src/install-hooks.mjs",
+    "test": "vitest run --passWithNoTests"
+  }
+}
