@@ -65,7 +65,7 @@ describe('pricing.mjs', () => {
   it('normaliza nombres de modelo con proveedor o sufijos encadenados de fecha/thinking/effort', () => {
     expect(normalizeModelKey('anthropic/claude-3.7-sonnet-20250219')).toBe('claude-3.7-sonnet');
     expect(normalizeModelKey('claude-3.7-sonnet-thinking')).toBe('claude-3.7-sonnet');
-    expect(normalizeModelKey('claude-haiku-5-5-thinking-high')).toBe('claude-haiku-5-5');
+    expect(normalizeModelKey('claude-haiku-5-5-thinking-high')).toBe('claude-haiku-5.5');
     expect(normalizeModelKey('openai/gpt-4o')).toBe('gpt-4o');
   });
 

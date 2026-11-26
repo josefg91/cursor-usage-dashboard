@@ -1,8 +1,8 @@
 import type { ModelRates, PricingOverridesMap } from '../types/pricing.js';
 
 /**
- * Tarifas base offline (USD por 1M de tokens) usadas como fallback si OpenRouter/LiteLLM
- * no están disponibles o aún no se han descargado.
+ * Tarifas base offline (USD por 1M de tokens) usadas únicamente como fallback
+ * si el catálogo de OpenRouter/LiteLLM no está disponible o no contiene el modelo.
  */
 export const DEFAULT_MODEL_RATES: PricingOverridesMap = {
   'claude-3.5-sonnet': {
@@ -47,23 +47,17 @@ export const DEFAULT_MODEL_RATES: PricingOverridesMap = {
     cache_write_per_1m: 1.0,
     output_per_1m: 4.0,
   },
-  'claude-4.5-haiku': {
-    input_per_1m: 1.0,
-    cache_read_per_1m: 0.1,
-    cache_write_per_1m: 1.25,
-    output_per_1m: 5.0,
+  'claude-haiku-4.5': {
+    input_per_1m: 0.5,
+    cache_read_per_1m: 0.05,
+    cache_write_per_1m: 0.625,
+    output_per_1m: 2.5,
   },
-  'claude-haiku-4-5': {
-    input_per_1m: 1.0,
-    cache_read_per_1m: 0.1,
-    cache_write_per_1m: 1.25,
-    output_per_1m: 5.0,
-  },
-  'claude-haiku-5-5': {
-    input_per_1m: 1.0,
-    cache_read_per_1m: 0.1,
-    cache_write_per_1m: 1.25,
-    output_per_1m: 5.0,
+  'claude-haiku-5.5': {
+    input_per_1m: 0.05,
+    cache_read_per_1m: 0.005,
+    cache_write_per_1m: 0.0625,
+    output_per_1m: 0.25,
   },
   'gpt-4o': {
     input_per_1m: 2.5,
@@ -133,6 +127,11 @@ export const DEFAULT_MODEL_RATES: PricingOverridesMap = {
   },
 };
 
+/**
+ * Normaliza identificadores de modelo entre Cursor y OpenRouter/LiteLLM:
+ * - Quita prefijo de proveedor (`anthropic/`) y sufijos encadenados (`-thinking-high`, `-20250219`)
+ * - Unifica versiones con guión a punto (`5-5` -> `5.5`, `3-7` -> `3.7`)
+ */
 export function normalizeModelKey(model: string): string {
   if (!model || typeof model !== 'string') return 'unknown';
   let key = model.trim().toLowerCase();
@@ -145,11 +144,13 @@ export function normalizeModelKey(model: string): string {
     prev = key;
     key = key.replace(/-(20\d{6}|thinking|max|high|medium|low|fast|preview|latest)$/, '');
   }
+  // Unificar separador de versión menor (ej. claude-haiku-5-5 -> claude-haiku-5.5)
+  key = key.replace(/(\d)-(\d)(?!\d)/g, '$1.$2');
   return key;
 }
 
 const FAMILY_FALLBACKS: Array<[string, string]> = [
-  ['haiku', 'claude-haiku-5-5'],
+  ['haiku', 'claude-haiku-5.5'],
   ['sonnet', 'claude-4-sonnet'],
   ['opus', 'claude-4-opus'],
   ['gpt-4o-mini', 'gpt-4o-mini'],
@@ -160,32 +161,69 @@ const FAMILY_FALLBACKS: Array<[string, string]> = [
   ['gemini-2.5-pro', 'gemini-2.5-pro'],
 ];
 
+function lookupInMap(
+  rawLower: string,
+  normalized: string,
+  sourceMap: PricingOverridesMap,
+): { rates: ModelRates; matchedKey: string } | null {
+  if (rawLower && sourceMap[rawLower]) {
+    return { rates: sourceMap[rawLower], matchedKey: rawLower };
+  }
+  if (sourceMap[normalized]) {
+    return { rates: sourceMap[normalized], matchedKey: normalized };
+  }
+
+  // Normalizar también las claves del mapa (por si un override local usa guión en vez de punto)
+  for (const [k, rates] of Object.entries(sourceMap)) {
+    if (normalizeModelKey(k) === normalized) {
+      return { rates, matchedKey: k };
+    }
+  }
+
+  const keys = Object.keys(sourceMap).sort((a, b) => b.length - a.length);
+  for (const key of keys) {
+    const normKey = normalizeModelKey(key);
+    if (normalized.includes(normKey) || rawLower.includes(key)) {
+      const rates = sourceMap[key];
+      if (rates) {
+        return { rates, matchedKey: key };
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Resuelve tarifas en orden estricto de prioridad:
+ * 1. Overrides locales (`pricing-overrides.json`)
+ * 2. Catálogo remoto cacheado en SQLite (OpenRouter / LiteLLM)
+ * 3. Tarifas base offline (`DEFAULT_MODEL_RATES`) + fallback por familia
+ */
 export function resolveModelRates(
   model: string,
   catalog: PricingOverridesMap,
   overrides: PricingOverridesMap = {},
 ): { rates: ModelRates; matched: boolean; matchedKey: string | null } {
-  const merged: PricingOverridesMap = { ...DEFAULT_MODEL_RATES, ...catalog, ...overrides };
   const rawLower = model.trim().toLowerCase();
   const normalized = normalizeModelKey(model);
 
-  if (rawLower && merged[rawLower]) {
-    return { rates: merged[rawLower], matched: true, matchedKey: rawLower };
-  }
-  if (merged[normalized]) {
-    return { rates: merged[normalized], matched: true, matchedKey: normalized };
+  const fromOverrides = lookupInMap(rawLower, normalized, overrides);
+  if (fromOverrides) {
+    return { ...fromOverrides, matched: true };
   }
 
-  const keys = Object.keys(merged).sort((a, b) => b.length - a.length);
-  for (const key of keys) {
-    if (normalized.includes(key) || rawLower.includes(key)) {
-      const rates = merged[key];
-      if (rates) {
-        return { rates, matched: true, matchedKey: key };
-      }
-    }
+  const fromCatalog = lookupInMap(rawLower, normalized, catalog);
+  if (fromCatalog) {
+    return { ...fromCatalog, matched: true };
   }
 
+  const fromDefaults = lookupInMap(rawLower, normalized, DEFAULT_MODEL_RATES);
+  if (fromDefaults) {
+    return { ...fromDefaults, matched: true };
+  }
+
+  const merged: PricingOverridesMap = { ...DEFAULT_MODEL_RATES, ...catalog, ...overrides };
   for (const [needle, fallbackKey] of FAMILY_FALLBACKS) {
     const fallbackRates = merged[fallbackKey];
     if (normalized.includes(needle) && fallbackRates) {

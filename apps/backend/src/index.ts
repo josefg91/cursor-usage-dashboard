@@ -33,6 +33,11 @@ async function bootstrap() {
       if (ingested.inserted > 0) {
         app.log.info(ingested, 'Eventos ingeridos desde spend-buffer.jsonl');
       }
+      // Recalcular costes de eventos 'calculated' con las tarifas normalizadas actuales
+      const recalc = repo.recalculateCalculatedEvents((model) => pricingService.getRates(model));
+      if (recalc.updated > 0) {
+        app.log.info(recalc, 'Costes recalculados con el catálogo de precios actual');
+      }
     })
     .catch((err) => {
       app.log.warn({ err }, 'No se pudo refrescar el catálogo remoto; usando tarifas locales');

@@ -48,23 +48,17 @@ export const DEFAULT_MODEL_RATES = {
     cache_write_per_1m: 1.0,
     output_per_1m: 4.0,
   },
-  'claude-4.5-haiku': {
-    input_per_1m: 1.0,
-    cache_read_per_1m: 0.1,
-    cache_write_per_1m: 1.25,
-    output_per_1m: 5.0,
+  'claude-haiku-4.5': {
+    input_per_1m: 0.5,
+    cache_read_per_1m: 0.05,
+    cache_write_per_1m: 0.625,
+    output_per_1m: 2.5,
   },
-  'claude-haiku-4-5': {
-    input_per_1m: 1.0,
-    cache_read_per_1m: 0.1,
-    cache_write_per_1m: 1.25,
-    output_per_1m: 5.0,
-  },
-  'claude-haiku-5-5': {
-    input_per_1m: 1.0,
-    cache_read_per_1m: 0.1,
-    cache_write_per_1m: 1.25,
-    output_per_1m: 5.0,
+  'claude-haiku-5.5': {
+    input_per_1m: 0.05,
+    cache_read_per_1m: 0.005,
+    cache_write_per_1m: 0.0625,
+    output_per_1m: 0.25,
   },
   'gpt-4o': {
     input_per_1m: 2.5,
@@ -150,6 +144,8 @@ export function normalizeModelKey(model) {
     prev = key;
     key = key.replace(/-(20\d{6}|thinking|max|high|medium|low|fast|preview|latest)$/, '');
   } while (key !== prev);
+  // Unificar versión con guión a punto (ej. claude-haiku-5-5 -> claude-haiku-5.5)
+  key = key.replace(/(\d)-(\d)(?!\d)/g, '$1.$2');
   return key;
 }
 
@@ -198,7 +194,7 @@ export function resolveModelRates(model, overrides = {}) {
 
   // Fallback por familia de modelo (para versiones nuevas antes de sincronizar OpenRouter en Fase 2)
   const familyFallbacks = [
-    ['haiku', 'claude-haiku-5-5'],
+    ['haiku', 'claude-haiku-5.5'],
     ['sonnet', 'claude-4-sonnet'],
     ['opus', 'claude-4-opus'],
     ['gpt-4o-mini', 'gpt-4o-mini'],

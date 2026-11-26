@@ -10,6 +10,10 @@ export async function pricingRoutes(app: FastifyInstance, deps: RouteDeps): Prom
   });
 
   app.post('/api/pricing/refresh', async () => {
-    return deps.pricingService.refreshCatalog();
+    const result = await deps.pricingService.refreshCatalog();
+    const recalc = deps.repo.recalculateCalculatedEvents((model) =>
+      deps.pricingService.getRates(model),
+    );
+    return { ...result, recalculated_events: recalc.updated };
   });
 }

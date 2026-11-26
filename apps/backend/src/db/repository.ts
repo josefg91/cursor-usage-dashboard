@@ -2,9 +2,11 @@ import fs from 'node:fs';
 import zlib from 'node:zlib';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import {
+  calculateTurnCost,
   normalizeModelKey,
   type ModelBreakdownItem,
   type ModelPricing,
+  type ModelRates,
   type PaginatedResponse,
   type PromptEvent,
   type PromptEventDetail,
@@ -517,6 +519,64 @@ export class TelemetryRepository {
     this.db
       .prepare("UPDATE prompt_events SET cost_usd = ?, cost_source = 'csv_reconciled' WHERE id = ?")
       .run(costUsd, eventId);
+  }
+
+  /**
+   * Recalcula el coste de eventos con `cost_source = 'calculated'` usando las tarifas actuales
+   * (nunca modifica eventos ya conciliados por CSV o Admin API).
+   */
+  recalculateCalculatedEvents(
+    resolveRatesFn: (model: string) => { rates: ModelRates; matched: boolean },
+  ): { updated: number } {
+    const rows = this.db
+      .prepare(
+        `
+        SELECT id, model, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens, cost_usd
+        FROM prompt_events
+        WHERE cost_source = 'calculated'
+      `,
+      )
+      .all() as Array<{
+      id: string;
+      model: string;
+      input_tokens: number;
+      cache_read_tokens: number;
+      cache_write_tokens: number;
+      output_tokens: number;
+      cost_usd: number;
+    }>;
+
+    const updateStmt = this.db.prepare(
+      'UPDATE prompt_events SET uncached_input_tokens = ?, cost_usd = ? WHERE id = ?',
+    );
+
+    let updated = 0;
+    this.db.exec('BEGIN');
+    try {
+      for (const row of rows) {
+        const { rates, matched } = resolveRatesFn(row.model);
+        if (!matched) continue;
+        const { uncached_input_tokens, cost_usd } = calculateTurnCost(
+          {
+            input_tokens: row.input_tokens,
+            cache_read_tokens: row.cache_read_tokens,
+            cache_write_tokens: row.cache_write_tokens,
+            output_tokens: row.output_tokens,
+          },
+          rates,
+        );
+        if (Math.abs(cost_usd - row.cost_usd) > 1e-7) {
+          updateStmt.run(uncached_input_tokens, cost_usd, row.id);
+          updated += 1;
+        }
+      }
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+
+    return { updated };
   }
 
   exportEvents(filters: QueryFilters): PromptEvent[] {

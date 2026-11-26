@@ -186,7 +186,9 @@ export function PromptInspectorDrawer({ eventId, onClose }: PromptInspectorDrawe
                         className={`rounded-lg border p-2.5 text-xs ${
                           alert.severity === 'danger'
                             ? 'border-rose-500/30 bg-rose-500/10 text-rose-200'
-                            : 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                            : alert.severity === 'warning'
+                              ? 'border-amber-500/30 bg-amber-500/10 text-amber-200'
+                              : 'border-sky-500/30 bg-sky-500/10 text-sky-200'
                         }`}
                       >
                         <p className="font-semibold">{alert.label}</p>

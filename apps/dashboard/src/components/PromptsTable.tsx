@@ -180,7 +180,9 @@ export function PromptsTable({
                               className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
                                 alert.severity === 'danger'
                                   ? 'bg-rose-500/15 text-rose-300'
-                                  : 'bg-amber-500/15 text-amber-300'
+                                  : alert.severity === 'warning'
+                                    ? 'bg-amber-500/15 text-amber-300'
+                                    : 'bg-sky-500/15 text-sky-300'
                               }`}
                             >
                               {alert.label}

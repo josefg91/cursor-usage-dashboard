@@ -47,9 +47,23 @@ describe('calculateTurnCost', () => {
 });
 
 describe('modelCatalog', () => {
-  it('normaliza sufijos encadenados de Cursor como -thinking-high', () => {
-    expect(normalizeModelKey('claude-haiku-5-5-thinking-high')).toBe('claude-haiku-5-5');
+  it('normaliza sufijos encadenados de Cursor y unifica guiones de versión a punto', () => {
+    expect(normalizeModelKey('claude-haiku-5-5-thinking-high')).toBe('claude-haiku-5.5');
+    expect(normalizeModelKey('claude-3-7-sonnet-20250219')).toBe('claude-3.7-sonnet');
     expect(normalizeModelKey('anthropic/claude-3.7-sonnet-20250219')).toBe('claude-3.7-sonnet');
+  });
+
+  it('prioriza catálogo remoto (OpenRouter) sobre defaults offline aunque Cursor use guión', () => {
+    const res = resolveModelRates('claude-haiku-5-5-high', {
+      'claude-haiku-5.5': {
+        input_per_1m: 0.05,
+        cache_read_per_1m: 0.005,
+        cache_write_per_1m: 0.0625,
+        output_per_1m: 0.25,
+      },
+    });
+    expect(res.matched).toBe(true);
+    expect(res.rates.input_per_1m).toBe(0.05);
   });
 
   it('prioriza overrides locales sobre catálogo remoto y defaults', () => {
