@@ -1,6 +1,7 @@
 import type {
   HealthResponse,
   ModelBreakdownItem,
+  ModelPricing,
   PaginatedResponse,
   PromptEvent,
   PromptEventDetail,
@@ -11,8 +12,8 @@ import type {
   TimeseriesBucket,
 } from '@cursor-dashboard/shared';
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
   if (!res.ok) {
     throw new Error(`Error API (${res.status}): ${res.statusText}`);
   }
@@ -35,7 +36,13 @@ export const apiClient = {
   },
   getPrompts: (
     range: TimeRange,
-    options: { view?: PromptsViewMode; model?: string; search?: string; page?: number; limit?: number } = {},
+    options: {
+      view?: PromptsViewMode;
+      model?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+    } = {},
   ) => {
     const params = new URLSearchParams({ range });
     if (options.view) params.set('view', options.view);
@@ -48,4 +55,13 @@ export const apiClient = {
     );
   },
   getPromptDetail: (id: string) => fetchJson<PromptEventDetail>(`/api/prompts/${id}`),
+  getPricing: () => fetchJson<{ models: ModelPricing[]; count: number }>('/api/pricing'),
+  refreshPricing: () =>
+    fetchJson<{ refreshed: boolean; count: number; source: string }>('/api/pricing/refresh', {
+      method: 'POST',
+    }),
+  syncBuffer: () =>
+    fetchJson<{ processed: number; inserted: number }>('/api/events/sync-buffer', {
+      method: 'POST',
+    }),
 };
