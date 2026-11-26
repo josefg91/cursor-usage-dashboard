@@ -289,4 +289,96 @@ describe('Backend API + SQLite + PricingService', () => {
       await app.close();
     }
   });
+
+  it('filtra correctamente el modo medición consciente con ventana from/to y sin from devuelve vacío', async () => {
+    const tmpDir = createTempDir();
+    const db = initDatabase(':memory:');
+    const { app } = await buildApp({
+      db,
+      overridesPath: path.join(tmpDir, 'pricing-overrides.json'),
+      pricingCacheTtlHours: 24,
+      bufferPath: path.join(tmpDir, 'spend-buffer.jsonl'),
+    });
+
+    try {
+      const baseMs = Date.now() - 20 * 60 * 1000;
+      const beforeIso = new Date(baseMs).toISOString();
+      const fromIso = new Date(baseMs + 5 * 60 * 1000).toISOString();
+      const insideIso = new Date(baseMs + 10 * 60 * 1000).toISOString();
+      const toIso = new Date(baseMs + 12 * 60 * 1000).toISOString();
+      const afterIso = new Date(baseMs + 15 * 60 * 1000).toISOString();
+
+      for (const [id, timestamp] of [
+        ['m-before', beforeIso],
+        ['m-inside', insideIso],
+        ['m-after', afterIso],
+      ] as const) {
+        await app.inject({
+          method: 'POST',
+          url: '/api/events',
+          payload: {
+            id,
+            conversation_id: `conv-${id}`,
+            timestamp,
+            model: 'gpt-4o',
+            prompt_text: `Prompt ${id}`,
+            input_tokens: 10_000,
+            output_tokens: 1_000,
+          },
+        });
+      }
+
+      // Sin `from`, range=measurement no debe exponer histórico
+      const emptyRes = await app.inject({
+        method: 'GET',
+        url: '/api/stats/summary?range=measurement',
+      });
+      expect(emptyRes.statusCode).toBe(200);
+      expect(emptyRes.json().prompt_count).toBe(0);
+
+      // Medición activa (solo `from`): incluye m-inside y m-after
+      const activeRes = await app.inject({
+        method: 'GET',
+        url: `/api/stats/summary?range=measurement&from=${encodeURIComponent(fromIso)}`,
+      });
+      expect(activeRes.statusCode).toBe(200);
+      expect(activeRes.json().prompt_count).toBe(2);
+
+      // Medición detenida (`from` y `to`): incluye únicamente m-inside
+      const stoppedSummary = await app.inject({
+        method: 'GET',
+        url: `/api/stats/summary?range=measurement&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`,
+      });
+      expect(stoppedSummary.statusCode).toBe(200);
+      expect(stoppedSummary.json().prompt_count).toBe(1);
+
+      const stoppedPrompts = await app.inject({
+        method: 'GET',
+        url: `/api/prompts?range=measurement&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`,
+      });
+      expect(stoppedPrompts.statusCode).toBe(200);
+      expect(stoppedPrompts.json().total).toBe(1);
+      expect(stoppedPrompts.json().items[0].id).toBe('m-inside');
+
+      // Serie temporal en ventana corta agrupa por minuto (YYYY-MM-DDTHH:mm)
+      const tsRes = await app.inject({
+        method: 'GET',
+        url: `/api/stats/timeseries?range=measurement&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`,
+      });
+      expect(tsRes.statusCode).toBe(200);
+      expect(tsRes.json()).toHaveLength(1);
+      expect(tsRes.json()[0].bucket).toBe(insideIso.slice(0, 16));
+
+      // Exportación JSON respeta ventana [from, to]
+      const exportRes = await app.inject({
+        method: 'GET',
+        url: `/api/export?format=json&range=measurement&from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`,
+      });
+      expect(exportRes.statusCode).toBe(200);
+      expect(exportRes.json().count).toBe(1);
+      expect(exportRes.json().events[0].id).toBe('m-inside');
+    } finally {
+      await app.close();
+    }
+  });
 });

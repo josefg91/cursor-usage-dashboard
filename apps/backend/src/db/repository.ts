@@ -21,8 +21,32 @@ import {
 
 export interface QueryFilters {
   range?: TimeRange;
+  from?: string;
+  to?: string;
   model?: string;
   search?: string;
+}
+
+export function parseTimeRange(range: string | undefined, fallback: TimeRange = 'today'): TimeRange {
+  if (
+    range === 'today' ||
+    range === '7d' ||
+    range === '30d' ||
+    range === 'all' ||
+    range === 'measurement'
+  ) {
+    return range;
+  }
+  return fallback;
+}
+
+export function parseIsoTimestamp(value: string | undefined): string | undefined {
+  if (!value || typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Date.parse(trimmed);
+  if (!Number.isFinite(parsed)) return undefined;
+  return new Date(parsed).toISOString();
 }
 
 export interface ListPromptsParams extends QueryFilters {
@@ -70,10 +94,27 @@ function buildWhereClause(filters: QueryFilters): { clause: string; params: SQLI
   const conditions: string[] = [];
   const params: SQLInputValue[] = [];
 
-  const startIso = getRangeStartIso(filters.range);
-  if (startIso) {
-    conditions.push('timestamp >= ?');
-    params.push(startIso);
+  if (filters.range === 'measurement') {
+    if (!filters.from) {
+      conditions.push('1 = 0');
+    } else {
+      conditions.push('timestamp >= ?');
+      params.push(filters.from);
+      if (filters.to) {
+        conditions.push('timestamp <= ?');
+        params.push(filters.to);
+      }
+    }
+  } else {
+    const startIso = filters.from ?? getRangeStartIso(filters.range);
+    if (startIso) {
+      conditions.push('timestamp >= ?');
+      params.push(startIso);
+    }
+    if (filters.to) {
+      conditions.push('timestamp <= ?');
+      params.push(filters.to);
+    }
   }
 
   if (filters.model && filters.model !== 'all') {
@@ -244,8 +285,19 @@ export class TelemetryRepository {
 
   getTimeseries(filters: QueryFilters): TimeseriesBucket[] {
     const { clause, params } = buildWhereClause(filters);
-    const bucketExpr =
-      filters.range === 'today' ? "substr(timestamp, 1, 13) || ':00'" : 'substr(timestamp, 1, 10)';
+    let bucketExpr = 'substr(timestamp, 1, 10)';
+    if (filters.range === 'today') {
+      bucketExpr = "substr(timestamp, 1, 13) || ':00'";
+    } else if (filters.range === 'measurement' && filters.from) {
+      const startMs = Date.parse(filters.from);
+      const endMs = filters.to ? Date.parse(filters.to) : Date.now();
+      const spanMs = Math.max(0, endMs - startMs);
+      if (spanMs <= 3 * 60 * 60 * 1000) {
+        bucketExpr = 'substr(timestamp, 1, 16)';
+      } else if (spanMs <= 48 * 60 * 60 * 1000) {
+        bucketExpr = "substr(timestamp, 1, 13) || ':00'";
+      }
+    }
 
     const rows = this.db
       .prepare(

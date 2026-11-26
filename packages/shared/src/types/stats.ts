@@ -1,4 +1,9 @@
-export type TimeRange = 'today' | '7d' | '30d' | 'all';
+export type TimeRange = 'today' | '7d' | '30d' | 'all' | 'measurement';
+
+export interface TimeWindow {
+  from?: string;
+  to?: string;
+}
 
 export type PromptsViewMode = 'turns' | 'sessions';
 

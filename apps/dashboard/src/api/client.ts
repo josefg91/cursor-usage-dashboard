@@ -12,8 +12,14 @@ import type {
   StorageMaintenanceStats,
   SummaryStats,
   TimeRange,
+  TimeWindow,
   TimeseriesBucket,
 } from '@cursor-dashboard/shared';
+
+function appendWindow(params: URLSearchParams, window?: TimeWindow): void {
+  if (window?.from) params.set('from', window.from);
+  if (window?.to) params.set('to', window.to);
+}
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -25,15 +31,20 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 export const apiClient = {
   getHealth: () => fetchJson<HealthResponse>('/api/health'),
-  getSummary: (range: TimeRange, model?: string) => {
+  getSummary: (range: TimeRange, model?: string, window?: TimeWindow) => {
     const params = new URLSearchParams({ range });
+    appendWindow(params, window);
     if (model && model !== 'all') params.set('model', model);
     return fetchJson<SummaryStats>(`/api/stats/summary?${params.toString()}`);
   },
-  getByModel: (range: TimeRange) =>
-    fetchJson<ModelBreakdownItem[]>(`/api/stats/by-model?range=${range}`),
-  getTimeseries: (range: TimeRange, model?: string) => {
+  getByModel: (range: TimeRange, window?: TimeWindow) => {
     const params = new URLSearchParams({ range });
+    appendWindow(params, window);
+    return fetchJson<ModelBreakdownItem[]>(`/api/stats/by-model?${params.toString()}`);
+  },
+  getTimeseries: (range: TimeRange, model?: string, window?: TimeWindow) => {
+    const params = new URLSearchParams({ range });
+    appendWindow(params, window);
     if (model && model !== 'all') params.set('model', model);
     return fetchJson<TimeseriesBucket[]>(`/api/stats/timeseries?${params.toString()}`);
   },
@@ -45,9 +56,12 @@ export const apiClient = {
       search?: string;
       page?: number;
       limit?: number;
+      from?: string;
+      to?: string;
     } = {},
   ) => {
     const params = new URLSearchParams({ range });
+    appendWindow(params, { from: options.from, to: options.to });
     if (options.view) params.set('view', options.view);
     if (options.model && options.model !== 'all') params.set('model', options.model);
     if (options.search) params.set('search', options.search);
@@ -82,9 +96,10 @@ export const apiClient = {
     }),
   getExportUrl: (
     format: 'csv' | 'json',
-    filters: { range: TimeRange; model?: string; search?: string },
+    filters: { range: TimeRange; from?: string; to?: string; model?: string; search?: string },
   ) => {
     const params = new URLSearchParams({ format, range: filters.range });
+    appendWindow(params, { from: filters.from, to: filters.to });
     if (filters.model && filters.model !== 'all') params.set('model', filters.model);
     if (filters.search) params.set('search', filters.search);
     return `/api/export?${params.toString()}`;

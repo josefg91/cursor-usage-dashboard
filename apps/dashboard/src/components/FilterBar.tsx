@@ -1,9 +1,10 @@
 import type { HealthResponse, TimeRange } from '@cursor-dashboard/shared';
-import { Activity, Pause, Play, RefreshCw, Settings, Terminal } from 'lucide-react';
+import { Activity, Pause, Play, RefreshCw, Settings, Terminal, Timer } from 'lucide-react';
 
 interface FilterBarProps {
   range: TimeRange;
   onRangeChange: (range: TimeRange) => void;
+  measurementStatus: 'idle' | 'active' | 'stopped';
   selectedModel: string;
   onModelChange: (model: string) => void;
   availableModels: string[];
@@ -22,11 +23,13 @@ const RANGES: Array<{ value: TimeRange; label: string }> = [
   { value: '7d', label: '7d' },
   { value: '30d', label: '30d' },
   { value: 'all', label: 'Todo' },
+  { value: 'measurement', label: 'Medición' },
 ];
 
 export function FilterBar({
   range,
   onRangeChange,
+  measurementStatus,
   selectedModel,
   onModelChange,
   availableModels,
@@ -77,20 +80,36 @@ export function FilterBar({
           {activeTab === 'dashboard' && (
             <>
               <div className="flex rounded-lg border border-slate-800 bg-[#111827] p-0.5">
-                {RANGES.map((item) => (
-                  <button
-                    key={item.value}
-                    type="button"
-                    onClick={() => onRangeChange(item.value)}
-                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
-                      range === item.value
-                        ? 'bg-slate-700 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
+                {RANGES.map((item) => {
+                  const isMeasurement = item.value === 'measurement';
+                  const isSelected = range === item.value;
+                  return (
+                    <button
+                      key={item.value}
+                      type="button"
+                      onClick={() => onRangeChange(item.value)}
+                      className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                        isSelected
+                          ? isMeasurement && measurementStatus === 'active'
+                            ? 'bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-500/40 shadow-sm'
+                            : 'bg-slate-700 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {isMeasurement && <Timer className="h-3.5 w-3.5" />}
+                      <span>{item.label}</span>
+                      {isMeasurement && measurementStatus === 'active' && (
+                        <span className="relative flex h-2 w-2">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                          <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+                        </span>
+                      )}
+                      {isMeasurement && measurementStatus === 'stopped' && (
+                        <span className="h-2 w-2 rounded-full bg-purple-400" />
+                      )}
+                    </button>
+                  );
+                })}
               </div>
 
               <select

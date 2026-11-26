@@ -1,21 +1,17 @@
 import type { FastifyInstance } from 'fastify';
 import type { PromptsViewMode, TimeRange } from '@cursor-dashboard/shared';
+import { parseIsoTimestamp, parseTimeRange } from '../db/repository.js';
 import type { RouteDeps } from './health.js';
 
 interface PromptsQuerystring {
   range?: TimeRange;
+  from?: string;
+  to?: string;
   model?: string;
   search?: string;
   view?: PromptsViewMode;
   page?: string;
   limit?: string;
-}
-
-function parseRange(range?: string): TimeRange {
-  if (range === 'today' || range === '7d' || range === '30d' || range === 'all') {
-    return range;
-  }
-  return 'today';
 }
 
 export async function promptsRoutes(app: FastifyInstance, deps: RouteDeps): Promise<void> {
@@ -25,7 +21,9 @@ export async function promptsRoutes(app: FastifyInstance, deps: RouteDeps): Prom
     const limit = Number(request.query.limit ?? 50);
 
     return deps.repo.listPrompts({
-      range: parseRange(request.query.range),
+      range: parseTimeRange(request.query.range, 'today'),
+      from: parseIsoTimestamp(request.query.from),
+      to: parseIsoTimestamp(request.query.to),
       model: request.query.model,
       search: request.query.search,
       view,

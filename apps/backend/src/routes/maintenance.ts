@@ -1,14 +1,7 @@
 import type { FastifyInstance } from 'fastify';
-import type { TimeRange } from '@cursor-dashboard/shared';
+import { parseIsoTimestamp, parseTimeRange } from '../db/repository.js';
 import { importCursorUsageCsv } from '../services/csvImportService.js';
 import type { RouteDeps } from './health.js';
-
-function parseRange(range?: string): TimeRange {
-  if (range === 'today' || range === '7d' || range === '30d' || range === 'all') {
-    return range;
-  }
-  return 'all';
-}
 
 function escapeCsvCell(value: unknown): string {
   const str = value === null || value === undefined ? '' : String(value);
@@ -46,12 +39,23 @@ export async function maintenanceRoutes(app: FastifyInstance, deps: RouteDeps): 
 
   // RF-14: Exportación de informes filtrados en CSV o JSON
   app.get<{
-    Querystring: { format?: string; range?: string; model?: string; search?: string };
+    Querystring: {
+      format?: string;
+      range?: string;
+      from?: string;
+      to?: string;
+      model?: string;
+      search?: string;
+    };
   }>('/api/export', async (request, reply) => {
-    const range = parseRange(request.query.range);
+    const range = parseTimeRange(request.query.range, 'all');
+    const from = parseIsoTimestamp(request.query.from);
+    const to = parseIsoTimestamp(request.query.to);
     const format = request.query.format === 'csv' ? 'csv' : 'json';
     const events = deps.repo.exportEvents({
       range,
+      from,
+      to,
       model: request.query.model,
       search: request.query.search,
     });

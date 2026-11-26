@@ -19,6 +19,8 @@ import {
 
 interface PromptsTableProps {
   range: TimeRange;
+  from?: string;
+  to?: string;
   selectedModel: string;
   view: PromptsViewMode;
   onViewChange: (view: PromptsViewMode) => void;
@@ -39,6 +41,8 @@ function isTurn(item: PromptEvent | SessionSummary): item is PromptEvent {
 
 export function PromptsTable({
   range,
+  from,
+  to,
   selectedModel,
   view,
   onViewChange,
@@ -53,8 +57,20 @@ export function PromptsTable({
   onSelectEvent,
 }: PromptsTableProps) {
   const totalPages = Math.max(1, Math.ceil(total / limit));
-  const exportCsvUrl = apiClient.getExportUrl('csv', { range, model: selectedModel, search });
-  const exportJsonUrl = apiClient.getExportUrl('json', { range, model: selectedModel, search });
+  const exportCsvUrl = apiClient.getExportUrl('csv', {
+    range,
+    from,
+    to,
+    model: selectedModel,
+    search,
+  });
+  const exportJsonUrl = apiClient.getExportUrl('json', {
+    range,
+    from,
+    to,
+    model: selectedModel,
+    search,
+  });
 
   return (
     <section className="rounded-xl border border-slate-800 bg-[#111827] p-5">
