@@ -12,9 +12,11 @@ import {
   formatCompactTokens,
   formatDateTime,
   formatDuration,
+  formatSessionId,
   formatUsd,
   getCostSeverity,
   getModelColor,
+  getSessionColor,
 } from '../utils/format';
 
 interface PromptsTableProps {
@@ -148,7 +150,7 @@ export function PromptsTable({
           <table className="w-full border-collapse text-left text-xs">
             <thead>
               <tr className="border-b border-slate-800 text-[11px] uppercase tracking-wider text-slate-400">
-                <th className="py-2.5 pr-3 font-medium">Fecha</th>
+                <th className="py-2.5 pr-3 font-medium">Fecha / Sesión</th>
                 <th className="px-3 py-2.5 font-medium">Modelo</th>
                 <th className="px-3 py-2.5 font-medium">Prompt</th>
                 <th className="px-3 py-2.5 text-right font-medium">Entrada / Caché</th>
@@ -165,14 +167,43 @@ export function PromptsTable({
                   ev.input_tokens > 0
                     ? Math.round((ev.cache_read_tokens / ev.input_tokens) * 100)
                     : 0;
+                const isFilteredBySession = search.trim() === ev.conversation_id;
+                const sessionColor = getSessionColor(ev.conversation_id);
                 return (
                   <tr
                     key={ev.id}
                     onClick={() => onSelectEvent(ev.id)}
                     className="cursor-pointer transition hover:bg-slate-800/40"
                   >
-                    <td className="whitespace-nowrap py-2.5 pr-3 font-mono text-[11px] text-slate-400">
-                      {formatDateTime(ev.timestamp)}
+                    <td className="whitespace-nowrap py-2.5 pr-3">
+                      <div className="flex flex-col items-start gap-1">
+                        <span className="font-mono text-[11px] text-slate-400">
+                          {formatDateTime(ev.timestamp)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSearchChange(isFilteredBySession ? '' : ev.conversation_id);
+                          }}
+                          title={
+                            isFilteredBySession
+                              ? `Sesión: ${ev.conversation_id} (clic para quitar filtro)`
+                              : `Sesión: ${ev.conversation_id} (clic para filtrar esta sesión)`
+                          }
+                          className={`inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 font-mono text-[10px] transition ${
+                            isFilteredBySession
+                              ? 'border-purple-500/50 bg-purple-500/15 text-purple-200'
+                              : 'border-slate-800 bg-[#0B0F19] text-slate-300 hover:border-slate-600 hover:text-white'
+                          }`}
+                        >
+                          <span
+                            className="h-1.5 w-1.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: sessionColor }}
+                          />
+                          {formatSessionId(ev.conversation_id)}
+                        </button>
+                      </div>
                     </td>
                     <td className="whitespace-nowrap px-3 py-2.5">
                       <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-200">
@@ -253,8 +284,22 @@ export function PromptsTable({
                       <td className="whitespace-nowrap py-2.5 pr-3 font-mono text-[11px] text-slate-400">
                         {formatDateTime(session.last_activity_at)}
                       </td>
-                      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[11px] text-slate-300">
-                        {session.conversation_id.slice(0, 12)}…
+                      <td className="whitespace-nowrap px-3 py-2.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onSearchChange(session.conversation_id);
+                            onViewChange('turns');
+                          }}
+                          title={`Sesión: ${session.conversation_id} (clic para ver sus turnos)`}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-slate-800 bg-[#0B0F19] px-2 py-0.5 font-mono text-[11px] text-slate-300 transition hover:border-slate-600 hover:text-white"
+                        >
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full"
+                            style={{ backgroundColor: getSessionColor(session.conversation_id) }}
+                          />
+                          {formatSessionId(session.conversation_id)}
+                        </button>
                       </td>
                       <td className="max-w-md px-3 py-2.5 text-slate-200">
                         <div className="truncate">{session.first_prompt_preview || '(sin texto)'}</div>

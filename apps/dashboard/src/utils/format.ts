@@ -84,3 +84,36 @@ export function getModelColor(model: string): string {
   }
   return '#94a3b8';
 }
+
+const SESSION_PALETTE = [
+  '#38bdf8', // sky-400
+  '#a78bfa', // violet-400
+  '#34d399', // emerald-400
+  '#fbbf24', // amber-400
+  '#fb7185', // rose-400
+  '#22d3ee', // cyan-400
+  '#e879f9', // fuchsia-400
+  '#a3e635', // lime-400
+  '#fb923c', // orange-400
+  '#818cf8', // indigo-400
+];
+
+/**
+ * Devuelve un color determinista por conversation_id para identificar visualmente turnos de la misma sesión.
+ */
+export function getSessionColor(conversationId: string): string {
+  const value = (conversationId || '').trim();
+  if (!value) return '#94a3b8';
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return SESSION_PALETTE[hash % SESSION_PALETTE.length]!;
+}
+
+export function formatSessionId(conversationId: string, maxLength = 12): string {
+  const trimmed = (conversationId || '').trim();
+  if (!trimmed) return '—';
+  if (trimmed.length <= maxLength) return trimmed;
+  return `${trimmed.slice(0, maxLength)}…`;
+}

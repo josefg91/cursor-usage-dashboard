@@ -9,6 +9,7 @@ import {
   formatNumber,
   formatUsd,
   getCostSeverity,
+  getSessionColor,
 } from '../utils/format';
 
 interface PromptInspectorDrawerProps {
@@ -99,6 +100,16 @@ export function PromptInspectorDrawer({ eventId, onClose }: PromptInspectorDrawe
                 <div>
                   <span className="text-slate-400">Fecha</span>
                   <p className="mt-1 font-mono text-slate-100">{formatDateTime(data.timestamp)}</p>
+                </div>
+                <div className="col-span-2 border-t border-slate-800/80 pt-3 sm:col-span-4">
+                  <span className="text-slate-400">Sesión</span>
+                  <p className="mt-1 flex items-center gap-2 font-mono text-[11px] text-slate-200 break-all">
+                    <span
+                      className="h-2 w-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: getSessionColor(data.conversation_id) }}
+                    />
+                    {data.conversation_id}
+                  </p>
                 </div>
               </div>
 
